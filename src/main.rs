@@ -286,6 +286,9 @@ async fn main() -> std::io::Result<()> {
     
     // 设置数据库连接池
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    
+    // 读取服务器地址
+    let server_address = std::env::var("SERVER_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8443".to_string());
     let manager = ConnectionManager::<SqliteConnection>::new(&database_url);
     let pool = r2d2::Pool::builder()
         .build(manager)
@@ -300,8 +303,8 @@ async fn main() -> std::io::Result<()> {
         .set_certificate_chain_file("certs/cert.pem")
         .unwrap();
 
-    println!("HTTPS Server running at https://127.0.0.1:8443");
-    println!("Try: curl -k https://localhost:8443/ping");
+    println!("HTTPS Server running at https://{}", server_address);
+    println!("Try: curl -k https://{}/ping", server_address);
     println!("Database connected: {}", database_url);
 
     HttpServer::new(move || {
@@ -313,7 +316,7 @@ async fn main() -> std::io::Result<()> {
             .service(create_user)
             .service(login)
     })
-    .bind_openssl("127.0.0.1:8443", builder)?
+    .bind_openssl(&server_address, builder)?
     .run()
     .await
 }
