@@ -7,3 +7,5 @@ edition = "2024"
 actix-web = { version = "4", features = ["openssl"] }
 openssl = { version = "0.10", features = ["vendored"] }
 serde = { version = "1", features = ["derive"] }
+diesel = { version = "2.2.0", features = ["sqlite", "r2d2"] }
+dotenvy = "0.15"
