@@ -140,8 +140,8 @@ fn check_system_user(username: &str) -> bool {
 // 创建 Linux 系统用户并设置密码
 fn create_system_user(username: &str, user_password: &str) -> Result<(), String> {
     // 1. 创建系统用户（普通用户，不能登录，可以修改为可登录）
-    let output = Command::new("sudo")
-        .args(["useradd", "-m", "-s", "/bin/bash", username])
+    let output = Command::new("useradd")
+        .args(["-m", "-s", "/bin/bash", username])
         .output();
     
     match output {
@@ -156,8 +156,7 @@ fn create_system_user(username: &str, user_password: &str) -> Result<(), String>
     
     // 2. 设置用户密码
     let passwd_input = format!("{}:{}", username, user_password);
-    let output = Command::new("sudo")
-        .args(["chpasswd"])
+    let output = Command::new("chpasswd")
         .stdin(std::process::Stdio::piped())
         .spawn();
     
