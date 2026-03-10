@@ -2,7 +2,8 @@ use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
 use diesel::prelude::*;
 use diesel::r2d2::{self, ConnectionManager};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::process::Command;
 
 mod models;
 mod schema;
@@ -16,6 +17,20 @@ type DbPool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
 #[derive(Serialize)]
 struct PingResponse {
     status: String,
+    message: String,
+}
+
+// 登录请求结构体
+#[derive(Deserialize)]
+struct LoginRequest {
+    username: String,
+    password: String,
+}
+
+// 登录响应结构体
+#[derive(Serialize)]
+struct LoginResponse {
+    success: bool,
     message: String,
 }
 
@@ -55,6 +70,10 @@ async fn create_user(pool: web::Data<DbPool>, new_user: web::Json<NewUser>) -> i
     let pool = pool.get_ref().clone();
     let user_data = new_user.into_inner();
     
+    // 提前克隆需要的值用于系统用户创建
+    let sys_username = user_data.name.clone();
+    let sys_password = user_data.password.clone();
+    
     let result: Result<(), (u16, String)> = web::block(move || {
         let mut conn = pool.get().expect("Couldn't get db connection from pool");
         
@@ -83,9 +102,140 @@ async fn create_user(pool: web::Data<DbPool>, new_user: web::Json<NewUser>) -> i
     .unwrap();
     
     match result {
-        Ok(_) => HttpResponse::Created().body("User created"),
+        Ok(_) => {
+            // 数据库用户创建成功，创建 Linux 系统用户
+            match create_system_user(&sys_username, &sys_password) {
+                Ok(_) => HttpResponse::Created().json(serde_json::json!({
+                    "message": "User created successfully",
+                    "system_user_created": true
+                })),
+                Err(e) => {
+                    // Linux 用户创建失败，但数据库用户已创建
+                    // 可以在这里添加回滚逻辑
+                    HttpResponse::Created().json(serde_json::json!({
+                        "message": "Database user created, but system user creation failed",
+                        "system_user_created": false,
+                        "error": e
+                    }))
+                }
+            }
+        }
         Err((409, msg)) => HttpResponse::Conflict().body(msg),
         Err((_, msg)) => HttpResponse::InternalServerError().body(msg),
+    }
+}
+
+// 验证 Linux 系统用户是否存在（id=name）
+fn check_system_user(username: &str) -> bool {
+    let output = Command::new("id")
+        .arg(username)
+        .output();
+    
+    match output {
+        Ok(result) => result.status.success(),
+        Err(_) => false,
+    }
+}
+
+// 创建 Linux 系统用户并设置密码
+fn create_system_user(username: &str, user_password: &str) -> Result<(), String> {
+    // 1. 创建系统用户（普通用户，不能登录，可以修改为可登录）
+    let output = Command::new("sudo")
+        .args(["useradd", "-m", "-s", "/bin/bash", username])
+        .output();
+    
+    match output {
+        Ok(result) => {
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                return Err(format!("Failed to create system user: {}", stderr));
+            }
+        }
+        Err(e) => return Err(format!("Command error: {}", e)),
+    }
+    
+    // 2. 设置用户密码
+    let passwd_input = format!("{}:{}", username, user_password);
+    let output = Command::new("sudo")
+        .args(["chpasswd"])
+        .stdin(std::process::Stdio::piped())
+        .spawn();
+    
+    match output {
+        Ok(mut child) => {
+            use std::io::Write;
+            if let Some(stdin) = child.stdin.as_mut() {
+                if let Err(e) = stdin.write_all(passwd_input.as_bytes()) {
+                    return Err(format!("Failed to write password: {}", e));
+                }
+            }
+            let result = child.wait_with_output();
+            match result {
+                Ok(output) => {
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        return Err(format!("Failed to set password: {}", stderr));
+                    }
+                }
+                Err(e) => return Err(format!("Failed to set password: {}", e)),
+            }
+        }
+        Err(e) => return Err(format!("Command error: {}", e)),
+    }
+    
+    Ok(())
+}
+
+// 登录接口
+#[post("/login")]
+async fn login(pool: web::Data<DbPool>, login_req: web::Json<LoginRequest>) -> impl Responder {
+    let pool = pool.get_ref().clone();
+    let req_username = login_req.username.clone();
+    let req_password = login_req.password.clone();
+    
+    let result: Result<bool, String> = web::block(move || {
+        let mut conn = pool.get().expect("Couldn't get db connection from pool");
+        
+        // 1. 查询数据库中的用户
+        let user_result = users
+            .filter(name.eq(&req_username))
+            .first::<User>(&mut conn)
+            .optional();
+        
+        match user_result {
+            Ok(Some(user)) => {
+                // 2. 检查 Linux 系统用户是否存在（id=name）
+                if !check_system_user(&user.name) {
+                    return Ok(false); // Linux 系统用户不存在
+                }
+                
+                // 3. 验证密码
+                if user.password == req_password {
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+            Ok(None) => Ok(false), // 数据库中不存在该用户
+            Err(e) => Err(format!("Database error: {}", e)),
+        }
+    })
+    .await
+    .unwrap();
+    
+    match result {
+        Ok(true) => HttpResponse::Ok().json(LoginResponse {
+            success: true,
+            message: "Login successful".to_string(),
+        }),
+        Ok(false) => HttpResponse::Unauthorized().json(LoginResponse {
+            success: false,
+            message: "Invalid username or password".to_string(),
+        }),
+        Err(msg) => HttpResponse::InternalServerError().json(LoginResponse {
+            success: false,
+            message: msg,
+        }),
     }
 }
 
@@ -121,6 +271,7 @@ async fn main() -> std::io::Result<()> {
             .service(ping)
             .service(get_users)
             .service(create_user)
+            .service(login)
     })
     .bind_openssl("127.0.0.1:8443", builder)?
     .run()

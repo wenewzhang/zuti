@@ -722,6 +722,7 @@ dependencies = [
  "dotenvy",
  "openssl",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

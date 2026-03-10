@@ -6,5 +6,6 @@ diesel::table! {
         name -> Text,
         #[sql_name = "type"]
         type_ -> Text,
+        password -> Text,
     }
 }

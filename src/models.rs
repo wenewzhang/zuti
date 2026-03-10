@@ -8,6 +8,7 @@ pub struct User {
     pub id: i32,
     pub name: String,
     pub type_: String,
+    pub password: String,
 }
 
 #[derive(Insertable, Deserialize)]
@@ -15,4 +16,5 @@ pub struct User {
 pub struct NewUser {
     pub name: String,
     pub type_: String,
+    pub password: String,
 }
