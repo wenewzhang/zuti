@@ -8,7 +8,7 @@ use std::process::Command;
 mod models;
 mod schema;
 
-use models::{NewUser, User};
+use models::{NewUser, User, UserInsert};
 use schema::users::dsl::*;
 
 // 数据库连接池类型
@@ -91,8 +91,14 @@ async fn create_user(pool: web::Data<DbPool>, new_user: web::Json<NewUser>) -> i
             }
         }
         
+        // 只插入用户名和类型，不存储密码
+        let user_insert = UserInsert {
+            name: user_data.name,
+            type_: user_data.type_,
+        };
+        
         diesel::insert_into(users)
-            .values(&user_data)
+            .values(&user_insert)
             .execute(&mut conn)
             .map_err(|_| (500, "Error creating user".to_string()))?;
         
@@ -133,6 +139,41 @@ fn check_system_user(username: &str) -> bool {
     
     match output {
         Ok(result) => result.status.success(),
+        Err(_) => false,
+    }
+}
+
+// 验证 Linux 系统用户密码
+fn verify_system_password(username: &str, user_password: &str) -> bool {
+    // 使用 su 命令验证密码
+    // su -c "echo success" username
+    // 如果密码正确，命令会成功执行
+    let mut child = match Command::new("su")
+        .arg("-c")
+        .arg("echo authenticated")
+        .arg(username)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn() {
+        Ok(child) => child,
+        Err(_) => return false,
+    };
+    
+    // 写入密码
+    if let Some(stdin) = child.stdin.as_mut() {
+        use std::io::Write;
+        if stdin.write_all(format!("{}\n", user_password).as_bytes()).is_err() {
+            return false;
+        }
+    }
+    
+    // 等待命令执行完成
+    match child.wait_with_output() {
+        Ok(output) => {
+            output.status.success() && 
+            String::from_utf8_lossy(&output.stdout).contains("authenticated")
+        }
         Err(_) => false,
     }
 }
@@ -208,8 +249,8 @@ async fn login(pool: web::Data<DbPool>, login_req: web::Json<LoginRequest>) -> i
                     return Ok(false); // Linux 系统用户不存在
                 }
                 
-                // 3. 验证密码
-                if user.password == req_password {
+                // 3. 使用 Linux 系统验证密码（不再比较数据库中的密码）
+                if verify_system_password(&user.name, &req_password) {
                     Ok(true)
                 } else {
                     Ok(false)
