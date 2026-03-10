@@ -52,19 +52,40 @@ async fn get_users(pool: web::Data<DbPool>) -> impl Responder {
 // 创建用户
 #[post("/users")]
 async fn create_user(pool: web::Data<DbPool>, new_user: web::Json<NewUser>) -> impl Responder {
-    let mut conn = pool.get().expect("Couldn't get db connection from pool");
+    let pool = pool.get_ref().clone();
+    let user_data = new_user.into_inner();
     
-    let result = web::block(move || {
+    let result: Result<(), (u16, String)> = web::block(move || {
+        let mut conn = pool.get().expect("Couldn't get db connection from pool");
+        
+        // 如果要创建的是 admin 用户，先检查是否已存在
+        if user_data.type_ == "admin" {
+            let admin_exists: bool = users
+                .filter(type_.eq("admin"))
+                .first::<User>(&mut conn)
+                .optional()
+                .map_err(|_| (500, "Error checking admin user".to_string()))?
+                .is_some();
+            
+            if admin_exists {
+                return Err((409, "Admin user already exists".to_string()));
+            }
+        }
+        
         diesel::insert_into(users)
-            .values(&new_user.into_inner())
+            .values(&user_data)
             .execute(&mut conn)
+            .map_err(|_| (500, "Error creating user".to_string()))?;
+        
+        Ok(())
     })
     .await
     .unwrap();
     
     match result {
         Ok(_) => HttpResponse::Created().body("User created"),
-        Err(_) => HttpResponse::InternalServerError().body("Error creating user"),
+        Err((409, msg)) => HttpResponse::Conflict().body(msg),
+        Err((_, msg)) => HttpResponse::InternalServerError().body(msg),
     }
 }
 
