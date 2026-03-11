@@ -47,6 +47,7 @@ struct LoginRequest {
 struct LoginResponse {
     success: bool,
     message: String,
+    token: Option<String>,
 }
 
 #[get("/ping")]
@@ -300,18 +301,20 @@ async fn login(pool: web::Data<DbPool>, login_req: web::Json<LoginRequest>) -> i
     
     match result {
         Ok(Some(token_value)) => HttpResponse::Ok()
-            .insert_header(("Authorization", token_value.clone()))
             .json(LoginResponse {
                 success: true,
                 message: "Login successful".to_string(),
+                token: Some(token_value),
             }),
         Ok(None) => HttpResponse::Unauthorized().json(LoginResponse {
             success: false,
             message: "Invalid username or password".to_string(),
+            token: None,
         }),
         Err(msg) => HttpResponse::InternalServerError().json(LoginResponse {
             success: false,
             message: msg,
+            token: None,
         }),
     }
 }
