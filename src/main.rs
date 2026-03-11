@@ -283,7 +283,7 @@ async fn login(pool: web::Data<DbPool>, login_req: web::Json<LoginRequest>) -> i
                     
                     // 5. 将 token 存入数据库
                     diesel::update(users.filter(name.eq(&req_username)))
-                        .set(schema::users::token.eq(&new_token))
+                        .set(schema::users::token.eq(&token_id))
                         .execute(&mut conn)
                         .map_err(|e| format!("Failed to update token: {}", e))?;
                     
