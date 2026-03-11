@@ -77,18 +77,15 @@ async fn create_user(pool: web::Data<DbPool>, new_user: web::Json<NewUser>) -> i
     let result: Result<(), (u16, String)> = web::block(move || {
         let mut conn = pool.get().expect("Couldn't get db connection from pool");
         
-        // 如果要创建的是 admin 用户，先检查是否已存在
-        if user_data.type_ == "admin" {
-            let admin_exists: bool = users
-                .filter(type_.eq("admin"))
-                .first::<User>(&mut conn)
-                .optional()
-                .map_err(|_| (500, "Error checking admin user".to_string()))?
-                .is_some();
-            
-            if admin_exists {
-                return Err((409, "Admin user already exists".to_string()));
-            }
+        // 检查 users 表中是否已有数据，如果有则不再插入
+        let user_exists: bool = users
+            .first::<User>(&mut conn)
+            .optional()
+            .map_err(|_| (500, "Error checking existing user".to_string()))?
+            .is_some();
+        
+        if user_exists {
+            return Err((409, "User already exists, cannot create more".to_string()));
         }
         
         // 只插入用户名和类型，不存储密码
