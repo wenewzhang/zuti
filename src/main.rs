@@ -63,23 +63,6 @@ async fn index() -> impl Responder {
     HttpResponse::Ok().body("HTTPS Server is running!")
 }
 
-// 获取所有用户
-#[get("/users")]
-async fn get_users(pool: web::Data<DbPool>) -> impl Responder {
-    let mut conn = pool.get().expect("Couldn't get db connection from pool");
-    
-    let result = web::block(move || {
-        users.load::<User>(&mut conn)
-    })
-    .await
-    .unwrap();
-    
-    match result {
-        Ok(user_list) => HttpResponse::Ok().json(user_list),
-        Err(_) => HttpResponse::InternalServerError().body("Error loading users"),
-    }
-}
-
 // 创建用户
 #[post("/users")]
 async fn create_user(pool: web::Data<DbPool>, new_user: web::Json<NewUser>) -> impl Responder {
@@ -343,7 +326,6 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(pool.clone()))
             .service(index)
             .service(ping)
-            .service(get_users)
             .service(create_user)
             .service(login)
     })
