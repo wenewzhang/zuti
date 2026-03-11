@@ -156,37 +156,28 @@ fn check_system_user(username: &str) -> bool {
     }
 }
 
-// 验证 Linux 系统用户密码
+// 验证 Linux 系统用户密码（使用 PAM）
 fn verify_system_password(username: &str, user_password: &str) -> bool {
-    // 使用 su 命令验证密码
-    // su -c "echo success" username
-    // 如果密码正确，命令会成功执行
-    let mut child = match Command::new("su")
-        .arg("-c")
-        .arg("echo authenticated")
-        .arg(username)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn() {
-        Ok(child) => child,
-        Err(_) => return false,
+    use pam::Client;
+
+    // 创建 PAM 客户端，使用系统默认的认证服务
+    let mut client = match Client::with_password("system-auth") {
+        Ok(client) => client,
+        Err(_) => {
+            // 如果 system-auth 不可用，尝试其他常见服务名
+            match Client::with_password("login") {
+                Ok(client) => client,
+                Err(_) => return false,
+            }
+        }
     };
-    
-    // 写入密码
-    if let Some(stdin) = child.stdin.as_mut() {
-        use std::io::Write;
-        if stdin.write_all(format!("{}\n", user_password).as_bytes()).is_err() {
-            return false;
-        }
-    }
-    
-    // 等待命令执行完成
-    match child.wait_with_output() {
-        Ok(output) => {
-            output.status.success() && 
-            String::from_utf8_lossy(&output.stdout).contains("authenticated")
-        }
+
+    // 设置用户名和密码
+    client.conversation_mut().set_credentials(username, user_password);
+
+    // 执行认证
+    match client.authenticate() {
+        Ok(_) => true,
         Err(_) => false,
     }
 }
