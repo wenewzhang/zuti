@@ -1,6 +1,8 @@
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use chrono::{Duration, Utc};
 use diesel::prelude::*;
 use diesel::r2d2::{self, ConnectionManager};
+use jsonwebtoken::{encode, EncodingKey, Header};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
@@ -14,6 +16,18 @@ use schema::users::dsl::*;
 
 // 数据库连接池类型
 type DbPool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
+
+// JWT Claims 结构体
+#[derive(Serialize, Deserialize)]
+struct Claims {
+    sub: String,      // 用户名
+    iat: i64,         // 签发时间
+    exp: i64,         // 过期时间
+    jti: String,      // Token ID (UUID)
+}
+
+// JWT 密钥（生产环境应该从环境变量读取）
+const JWT_SECRET: &[u8] = b"your-secret-key-change-in-production";
 
 #[derive(Serialize)]
 struct PingResponse {
@@ -249,8 +263,22 @@ async fn login(pool: web::Data<DbPool>, login_req: web::Json<LoginRequest>) -> i
                 
                 // 3. 使用 Linux 系统验证密码（不再比较数据库中的密码）
                 if verify_system_password(&user.name, &req_password) {
-                    // 4. 生成 token
-                    let new_token = format!("Bearer {}", Uuid::new_v4().to_string());
+                    // 4. 生成 JWT token
+                    let now = Utc::now();
+                    let token_id = Uuid::new_v4().to_string();
+                    
+                    let claims = Claims {
+                        sub: user.name.clone(),
+                        iat: now.timestamp(),
+                        exp: (now + Duration::days(30)).timestamp(),
+                        jti: token_id.clone(),
+                    };
+                    
+                    let new_token = encode(
+                        &Header::default(),
+                        &claims,
+                        &EncodingKey::from_secret(JWT_SECRET),
+                    ).map_err(|e| format!("Failed to encode token: {}", e))?;
                     
                     // 5. 将 token 存入数据库
                     diesel::update(users.filter(name.eq(&req_username)))
