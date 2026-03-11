@@ -11,6 +11,7 @@ pub struct User {
     pub name: String,
     pub type_: String,
     pub password: String,
+    pub token: Option<String>,
 }
 
 #[derive(Insertable, Deserialize)]

@@ -4,6 +4,7 @@ use diesel::r2d2::{self, ConnectionManager};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
+use uuid::Uuid;
 
 mod models;
 mod schema;
@@ -230,7 +231,7 @@ async fn login(pool: web::Data<DbPool>, login_req: web::Json<LoginRequest>) -> i
     let req_username = login_req.username.clone();
     let req_password = login_req.password.clone();
     
-    let result: Result<bool, String> = web::block(move || {
+    let result: Result<Option<String>, String> = web::block(move || {
         let mut conn = pool.get().expect("Couldn't get db connection from pool");
         
         // 1. 查询数据库中的用户
@@ -243,17 +244,26 @@ async fn login(pool: web::Data<DbPool>, login_req: web::Json<LoginRequest>) -> i
             Ok(Some(user)) => {
                 // 2. 检查 Linux 系统用户是否存在（id=name）
                 if !check_system_user(&user.name) {
-                    return Ok(false); // Linux 系统用户不存在
+                    return Ok(None); // Linux 系统用户不存在
                 }
                 
                 // 3. 使用 Linux 系统验证密码（不再比较数据库中的密码）
                 if verify_system_password(&user.name, &req_password) {
-                    Ok(true)
+                    // 4. 生成 token
+                    let new_token = format!("Bearer {}", Uuid::new_v4().to_string());
+                    
+                    // 5. 将 token 存入数据库
+                    diesel::update(users.filter(name.eq(&req_username)))
+                        .set(schema::users::token.eq(&new_token))
+                        .execute(&mut conn)
+                        .map_err(|e| format!("Failed to update token: {}", e))?;
+                    
+                    Ok(Some(new_token))
                 } else {
-                    Ok(false)
+                    Ok(None)
                 }
             }
-            Ok(None) => Ok(false), // 数据库中不存在该用户
+            Ok(None) => Ok(None), // 数据库中不存在该用户
             Err(e) => Err(format!("Database error: {}", e)),
         }
     })
@@ -261,11 +271,13 @@ async fn login(pool: web::Data<DbPool>, login_req: web::Json<LoginRequest>) -> i
     .unwrap();
     
     match result {
-        Ok(true) => HttpResponse::Ok().json(LoginResponse {
-            success: true,
-            message: "Login successful".to_string(),
-        }),
-        Ok(false) => HttpResponse::Unauthorized().json(LoginResponse {
+        Ok(Some(token_value)) => HttpResponse::Ok()
+            .insert_header(("Authorization", token_value.clone()))
+            .json(LoginResponse {
+                success: true,
+                message: "Login successful".to_string(),
+            }),
+        Ok(None) => HttpResponse::Unauthorized().json(LoginResponse {
             success: false,
             message: "Invalid username or password".to_string(),
         }),

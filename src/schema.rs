@@ -7,5 +7,6 @@ diesel::table! {
         #[sql_name = "type"]
         type_ -> Text,
         password -> Text,
+        token -> Nullable<Text>,
     }
 }
