@@ -291,6 +291,34 @@ async fn main() -> std::io::Result<()> {
         .build(manager)
         .expect("Failed to create pool");
 
+    // 启动检查：检查 users 表第一个用户是否存在于 Linux 系统
+    {
+        use models::User;
+        use schema::users::dsl::*;
+        
+        let mut conn = pool.get().expect("Couldn't get db connection from pool");
+        
+        match users.first::<User>(&mut conn).optional() {
+            Ok(Some(first_user)) => {
+                if check_system_user(&first_user.name) {
+                    println!("Startup check passed: user '{}' exists in Linux system", first_user.name);
+                } else {
+                    eprintln!("Startup check warning: user '{}' does NOT exist in Linux system", first_user.name);
+                }
+            }
+            Ok(None) => {
+                println!("Startup check: no users found in database");
+                println!("You can create a user with:");
+                println!("curl -k -X POST https://192.168.3.248:8443/users \\");
+                println!("    -H \"Content-Type: application/json\" \\");
+                println!("    -d '{{\"name\": \"myadmin\", \"type_\": \"admin\", \"password\":\"123321\"}}'");
+            }
+            Err(e) => {
+                eprintln!("Startup check error: failed to query database - {}", e);
+            }
+        }
+    }
+
     // 加载 TLS 证书
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
     builder
