@@ -303,15 +303,16 @@ async fn main() -> std::io::Result<()> {
                 if check_system_user(&first_user.name) {
                     println!("Startup check passed: user '{}' exists in Linux system", first_user.name);
                 } else {
-                    eprintln!("Startup check warning: user '{}' does NOT exist in Linux system", first_user.name);
+                    eprintln!("\x1b[31mStartup check warning: user '{}' does NOT exist in Linux system\x1b[0m", first_user.name);
                 }
             }
             Ok(None) => {
                 println!("Startup check: no users found in database");
                 println!("You can create a user with:");
-                println!("curl -k -X POST https://192.168.3.248:8443/users \\");
-                println!("    -H \"Content-Type: application/json\" \\");
-                println!("    -d '{{\"name\": \"myadmin\", \"type_\": \"admin\", \"password\":\"123321\"}}'");
+                // ANSI 红色: \x1b[31m, 重置: \x1b[0m
+                println!("\x1b[31mcurl -k -X POST https://192.168.3.248:8443/users \\\x1b[0m");
+                println!("\x1b[31m    -H \"Content-Type: application/json\" \\\x1b[0m");
+                println!("\x1b[31m    -d '{{\"name\": \"myadmin\", \"type_\": \"admin\", \"password\":\"123321\"}}'\x1b[0m");
             }
             Err(e) => {
                 eprintln!("Startup check error: failed to query database - {}", e);
