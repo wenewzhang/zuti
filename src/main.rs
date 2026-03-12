@@ -1,14 +1,14 @@
-use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
 use chrono::{Duration, Utc};
 use diesel::prelude::*;
 use diesel::r2d2::{self, ConnectionManager};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use uuid::Uuid;
 
 mod apis;
+mod jwt;
 mod models;
 mod schema;
 
@@ -17,51 +17,6 @@ use schema::users::dsl::*;
 
 // 数据库连接池类型
 type DbPool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
-
-// JWT Claims 结构体
-#[derive(Serialize, Deserialize)]
-pub struct Claims {
-    sub: String,      // 用户名
-    iat: i64,         // 签发时间
-    exp: i64,         // 过期时间
-    jti: String,      // Token ID (UUID)
-}
-
-// JWT 密钥（生产环境应该从环境变量读取）
-const JWT_SECRET: &[u8] = b"your-secret-key-change-in-production";
-
-// 从请求头中提取并验证 JWT token
-pub fn extract_and_validate_token(req: &HttpRequest) -> Result<Claims, HttpResponse> {
-    let auth_header = req
-        .headers()
-        .get("Authorization")
-        .ok_or_else(|| HttpResponse::Unauthorized().json(serde_json::json!({
-            "error": "Missing Authorization header"
-        })))?;
-
-    let auth_str = auth_header
-        .to_str()
-        .map_err(|_| HttpResponse::Unauthorized().json(serde_json::json!({
-            "error": "Invalid Authorization header"
-        })))?;
-
-    let jwt_token = auth_str
-        .strip_prefix("Bearer ")
-        .ok_or_else(|| HttpResponse::Unauthorized().json(serde_json::json!({
-            "error": "Invalid Authorization format, expected 'Bearer <token>'"
-        })))?;
-
-    let token_data = decode::<Claims>(
-        jwt_token,
-        &DecodingKey::from_secret(JWT_SECRET),
-        &Validation::default(),
-    )
-    .map_err(|e| HttpResponse::Unauthorized().json(serde_json::json!({
-        "error": format!("Invalid token: {}", e)
-    })))?;
-
-    Ok(token_data.claims)
-}
 
 #[derive(Serialize)]
 struct PingResponse {
@@ -276,18 +231,12 @@ async fn login(pool: web::Data<DbPool>, login_req: web::Json<LoginRequest>) -> i
                     let now = Utc::now();
                     let token_id = Uuid::new_v4().to_string();
                     
-                    let claims = Claims {
-                        sub: user.name.clone(),
-                        iat: now.timestamp(),
-                        exp: (now + Duration::days(30)).timestamp(),
-                        jti: token_id.clone(),
-                    };
-                    
-                    let new_token = encode(
-                        &Header::default(),
-                        &claims,
-                        &EncodingKey::from_secret(JWT_SECRET),
-                    ).map_err(|e| format!("Failed to encode token: {}", e))?;
+                    let new_token = jwt::generate_token(
+                        user.name.clone(),
+                        now.timestamp(),
+                        (now + Duration::days(30)).timestamp(),
+                        token_id.clone(),
+                    )?;
                     
                     // 5. 将 token 存入数据库
                     diesel::update(users.filter(name.eq(&req_username)))

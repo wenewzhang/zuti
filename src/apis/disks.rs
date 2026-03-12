@@ -2,7 +2,7 @@ use actix_web::{get, HttpRequest, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
-use crate::extract_and_validate_token;
+use crate::jwt::extract_and_validate_token;
 
 // lsblk 输出项
 #[derive(Serialize, Deserialize, Debug)]
