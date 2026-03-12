@@ -1,6 +1,7 @@
 use actix_web::{HttpRequest, HttpResponse};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
+use std::env;
 
 // JWT Claims 结构体
 #[derive(Serialize, Deserialize)]
@@ -11,8 +12,12 @@ pub struct Claims {
     pub jti: String, // Token ID (UUID)
 }
 
-// JWT 密钥（生产环境应该从环境变量读取）
-pub const JWT_SECRET: &[u8] = b"your-secret-key-change-in-production";
+// 从环境变量获取 JWT 密钥
+pub fn jwt_secret() -> Vec<u8> {
+    env::var("JWT_SECRET")
+        .unwrap_or_else(|_| "your-secret-key-change-in-production".to_string())
+        .into_bytes()
+}
 
 // 从请求头中提取并验证 JWT token
 pub fn extract_and_validate_token(req: &HttpRequest) -> Result<Claims, HttpResponse> {
@@ -37,7 +42,7 @@ pub fn extract_and_validate_token(req: &HttpRequest) -> Result<Claims, HttpRespo
 
     let token_data = decode::<Claims>(
         jwt_token,
-        &DecodingKey::from_secret(JWT_SECRET),
+        &DecodingKey::from_secret(&jwt_secret()),
         &Validation::default(),
     )
     .map_err(|e| HttpResponse::Unauthorized().json(serde_json::json!({
@@ -59,7 +64,7 @@ pub fn generate_token(sub: String, iat: i64, exp: i64, jti: String) -> Result<St
     encode(
         &Header::default(),
         &claims,
-        &EncodingKey::from_secret(JWT_SECRET),
+        &EncodingKey::from_secret(&jwt_secret()),
     )
     .map_err(|e| format!("Failed to encode token: {}", e))
 }
