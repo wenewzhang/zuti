@@ -1,8 +1,8 @@
-use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use chrono::{Duration, Utc};
 use diesel::prelude::*;
 use diesel::r2d2::{self, ConnectionManager};
-use jsonwebtoken::{encode, EncodingKey, Header};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
@@ -28,6 +28,58 @@ struct Claims {
 
 // JWT 密钥（生产环境应该从环境变量读取）
 const JWT_SECRET: &[u8] = b"your-secret-key-change-in-production";
+
+// 从请求头中提取并验证 JWT token
+fn extract_and_validate_token(req: &HttpRequest) -> Result<Claims, HttpResponse> {
+    let auth_header = req
+        .headers()
+        .get("Authorization")
+        .ok_or_else(|| HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "Missing Authorization header"
+        })))?;
+
+    let auth_str = auth_header
+        .to_str()
+        .map_err(|_| HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "Invalid Authorization header"
+        })))?;
+
+    let jwt_token = auth_str
+        .strip_prefix("Bearer ")
+        .ok_or_else(|| HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "Invalid Authorization format, expected 'Bearer <token>'"
+        })))?;
+
+    let token_data = decode::<Claims>(
+        jwt_token,
+        &DecodingKey::from_secret(JWT_SECRET),
+        &Validation::default(),
+    )
+    .map_err(|e| HttpResponse::Unauthorized().json(serde_json::json!({
+        "error": format!("Invalid token: {}", e)
+    })))?;
+
+    Ok(token_data.claims)
+}
+
+// lsblk 输出项
+#[derive(Serialize, Deserialize, Debug)]
+struct DiskInfo {
+    name: String,
+    size: String,
+    #[serde(rename = "type")]
+    disk_type: String,
+    mountpoint: Option<String>,
+    children: Option<Vec<DiskInfo>>,
+}
+
+// get_disks 响应结构体
+#[derive(Serialize)]
+struct DisksResponse {
+    success: bool,
+    data: Option<Vec<DiskInfo>>,
+    error: Option<String>,
+}
 
 #[derive(Serialize)]
 struct PingResponse {
@@ -293,6 +345,97 @@ async fn login(pool: web::Data<DbPool>, login_req: web::Json<LoginRequest>) -> i
     }
 }
 
+// get_disks API - 返回硬盘信息（需要 JWT 认证）
+#[get("/get_disks")]
+async fn get_disks(req: HttpRequest) -> impl Responder {
+    // 1. 验证 JWT token
+    let _claims = match extract_and_validate_token(&req) {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    // 2. 执行 lsblk 命令获取硬盘信息
+    let output = match Command::new("lsblk")
+        .args(["-J", "-o", "NAME,SIZE,TYPE,MOUNTPOINT"])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(DisksResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to execute lsblk: {}", e)),
+            });
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return HttpResponse::InternalServerError().json(DisksResponse {
+            success: false,
+            data: None,
+            error: Some(format!("lsblk command failed: {}", stderr)),
+        });
+    }
+
+    // 3. 解析 JSON 输出
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lsblk_output: serde_json::Value = match serde_json::from_str(&stdout) {
+        Ok(val) => val,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(DisksResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to parse lsblk output: {}", e)),
+            });
+        }
+    };
+
+    // 4. 提取 blockdevices 数组
+    let blockdevices = match lsblk_output.get("blockdevices") {
+        Some(devices) => match devices.as_array() {
+            Some(arr) => arr,
+            None => {
+                return HttpResponse::InternalServerError().json(DisksResponse {
+                    success: false,
+                    data: None,
+                    error: Some("Invalid lsblk output format".to_string()),
+                });
+            }
+        },
+        None => {
+            return HttpResponse::InternalServerError().json(DisksResponse {
+                success: false,
+                data: None,
+                error: Some("No blockdevices found in lsblk output".to_string()),
+            });
+        }
+    };
+
+    // 5. 解析为 DiskInfo 结构体
+    let disks: Vec<DiskInfo> = match blockdevices
+        .iter()
+        .map(|d| serde_json::from_value::<DiskInfo>(d.clone()))
+        .collect()
+    {
+        Ok(d) => d,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(DisksResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to parse disk info: {}", e)),
+            });
+        }
+    };
+
+    // 6. 返回结果
+    HttpResponse::Ok().json(DisksResponse {
+        success: true,
+        data: Some(disks),
+        error: None,
+    })
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // 加载 .env 文件
@@ -328,6 +471,7 @@ async fn main() -> std::io::Result<()> {
             .service(ping)
             .service(create_user)
             .service(login)
+            .service(get_disks)
     })
     .bind_openssl(&server_address, builder)?
     .run()
