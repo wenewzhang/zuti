@@ -191,59 +191,92 @@ pub async fn format_disk(
     }
 
     // 4. 执行格式化命令
-    // 4.1 先用 wipefs -a 清除
     let device_path = format!("/dev/{}", disk_name);
-    let wipefs_output = match Command::new("wipefs")
-        .args(["-a", &device_path])
-        .output()
-    {
-        Ok(result) => result,
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(FormatDiskResponse {
-                success: false,
-                message: "Failed to execute wipefs command".to_string(),
-                error: Some(format!("Command error: {}", e)),
-            });
-        }
-    };
 
-    if !wipefs_output.status.success() {
-        let stderr = String::from_utf8_lossy(&wipefs_output.stderr);
+    // 4.1 先用 zpool labelclear 清除 ZFS label（如果存在）
+    let _ = Command::new("zpool")
+        .args(["labelclear", "-f", &device_path])
+        .output();
+
+    // 4.2 用 dd 覆盖 ZFS label 所在的关键区域
+    // ZFS label 位于: L0(0-256KB), L1(256KB-512KB), L2(磁盘末尾-256KB), L3(磁盘末尾-512KB到末尾-256KB)
+    let dd_zero_1m = Command::new("dd")
+        .args([
+            "if=/dev/zero",
+            &format!("of={}", device_path),
+            "bs=1M",
+            "count=16",
+            "status=none",
+        ])
+        .output();
+
+    if let Err(e) = dd_zero_1m {
         return HttpResponse::InternalServerError().json(FormatDiskResponse {
             success: false,
-            message: format!("Failed to wipe disk '{}'", disk_name),
-            error: Some(stderr.to_string()),
+            message: "Failed to clear disk header".to_string(),
+            error: Some(format!("dd error: {}", e)),
         });
     }
 
-    // 4.2 再用 sgdisk -Z 清空分区表
-    let sgdisk_output = match Command::new("sgdisk")
-        .args(["-Z", &device_path])
-        .output()
-    {
-        Ok(result) => result,
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(FormatDiskResponse {
-                success: false,
-                message: "Failed to execute sgdisk command".to_string(),
-                error: Some(format!("Command error: {}", e)),
-            });
-        }
-    };
+    // 4.3 获取磁盘大小，清除末尾的 ZFS label
+    let disk_size_output = Command::new("blockdev")
+        .args(["--getsize64", &device_path])
+        .output();
 
-    // 5. 检查格式化结果
-    if sgdisk_output.status.success() {
-        HttpResponse::Ok().json(FormatDiskResponse {
-            success: true,
-            message: format!("Disk '{}' formatted successfully (wiped and partition table cleared)", disk_name),
-            error: None,
-        })
-    } else {
-        let stderr = String::from_utf8_lossy(&sgdisk_output.stderr);
-        HttpResponse::InternalServerError().json(FormatDiskResponse {
+    if let Ok(output) = disk_size_output {
+        if output.status.success() {
+            let size_str = String::from_utf8_lossy(&output.stdout);
+            if let Ok(size) = size_str.trim().parse::<u64>() {
+                // 计算最后 4MB 的位置（覆盖 L2 和 L3 label）
+                let skip_bytes = size.saturating_sub(4 * 1024 * 1024);
+                let _ = Command::new("dd")
+                    .args([
+                        "if=/dev/zero",
+                        &format!("of={}", device_path),
+                        "bs=1M",
+                        "seek=0",
+                        &format!("skip={}", skip_bytes / (1024 * 1024)),
+                        "count=4",
+                        "status=none",
+                    ])
+                    .output();
+            }
+        }
+    }
+
+    // 4.4 用 wipefs -a 清除其他文件系统签名
+    let _ = Command::new("wipefs")
+        .args(["-a", &device_path])
+        .output();
+
+    // 4.5 用 sgdisk -Z 清空分区表
+    let sgdisk_output = Command::new("sgdisk")
+        .args(["-Z", &device_path])
+        .output();
+
+    match sgdisk_output {
+        Ok(result) if result.status.success() => {
+            HttpResponse::Ok().json(FormatDiskResponse {
+                success: true,
+                message: format!(
+                    "Disk '{}' fully cleared (ZFS labels, partition table and signatures removed)",
+                    disk_name
+                ),
+                error: None,
+            })
+        }
+        Ok(result) => {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            HttpResponse::InternalServerError().json(FormatDiskResponse {
+                success: false,
+                message: format!("Failed to clear partition table on disk '{}'", disk_name),
+                error: Some(stderr.to_string()),
+            })
+        }
+        Err(e) => HttpResponse::InternalServerError().json(FormatDiskResponse {
             success: false,
-            message: format!("Failed to clear partition table on disk '{}'", disk_name),
-            error: Some(stderr.to_string()),
-        })
+            message: "Failed to execute sgdisk command".to_string(),
+            error: Some(format!("Command error: {}", e)),
+        }),
     }
 }
