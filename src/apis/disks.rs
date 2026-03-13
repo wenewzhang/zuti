@@ -151,14 +151,14 @@ pub struct FormatDiskRequest {
 
 // format_disk 响应结构体
 #[derive(Serialize)]
-pub struct FormatDiskResponse {
+pub struct DeleteDiskResponse {
     pub success: bool,
     pub message: String,
     pub error: Option<String>,
 }
 
 // format_disk API - 格式化空闲硬盘（需要 JWT 认证）
-#[post("/format_disk")]
+#[post("/delete_disk")]
 pub async fn format_disk(
     req: HttpRequest,
     format_req: web::Json<FormatDiskRequest>,
@@ -173,7 +173,7 @@ pub async fn format_disk(
 
     // 2. 验证磁盘名称合法性（只允许字母数字）
     if !disk_name.chars().all(|c| c.is_alphanumeric()) {
-        return HttpResponse::BadRequest().json(FormatDiskResponse {
+        return HttpResponse::BadRequest().json(DeleteDiskResponse {
             success: false,
             message: "Invalid disk name format".to_string(),
             error: Some("Disk name must be alphanumeric".to_string()),
@@ -183,7 +183,7 @@ pub async fn format_disk(
     // 3. 检查硬盘是否在空闲硬盘列表中
     let free_disks = get_free_disk_list();
     if !free_disks.contains(&disk_name.to_string()) {
-        return HttpResponse::BadRequest().json(FormatDiskResponse {
+        return HttpResponse::BadRequest().json(DeleteDiskResponse {
             success: false,
             message: format!("Disk '{}' is not available for formatting", disk_name),
             error: Some("Disk is either in use by ZFS or does not exist".to_string()),
@@ -211,7 +211,7 @@ pub async fn format_disk(
         .output();
 
     if let Err(e) = dd_zero_1m {
-        return HttpResponse::InternalServerError().json(FormatDiskResponse {
+        return HttpResponse::InternalServerError().json(DeleteDiskResponse {
             success: false,
             message: "Failed to clear disk header".to_string(),
             error: Some(format!("dd error: {}", e)),
@@ -256,7 +256,7 @@ pub async fn format_disk(
 
     match sgdisk_output {
         Ok(result) if result.status.success() => {
-            HttpResponse::Ok().json(FormatDiskResponse {
+            HttpResponse::Ok().json(DeleteDiskResponse {
                 success: true,
                 message: format!(
                     "Disk '{}' fully cleared (ZFS labels, partition table and signatures removed)",
@@ -267,13 +267,13 @@ pub async fn format_disk(
         }
         Ok(result) => {
             let stderr = String::from_utf8_lossy(&result.stderr);
-            HttpResponse::InternalServerError().json(FormatDiskResponse {
+            HttpResponse::InternalServerError().json(DeleteDiskResponse {
                 success: false,
                 message: format!("Failed to clear partition table on disk '{}'", disk_name),
                 error: Some(stderr.to_string()),
             })
         }
-        Err(e) => HttpResponse::InternalServerError().json(FormatDiskResponse {
+        Err(e) => HttpResponse::InternalServerError().json(DeleteDiskResponse {
             success: false,
             message: "Failed to execute sgdisk command".to_string(),
             error: Some(format!("Command error: {}", e)),
