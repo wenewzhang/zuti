@@ -5,6 +5,24 @@ use std::process::Command;
 use crate::disk::get_free_disks as get_free_disk_list;
 use crate::jwt::extract_and_validate_token;
 
+// 分区信息结构体
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PartitionInfo {
+    pub name: String,
+    pub fstype: Option<String>,
+    pub label: Option<String>,
+    pub uuid: Option<String>,
+    pub mountpoints: Vec<Option<String>>,
+}
+
+// get_free_parts 响应结构体
+#[derive(Serialize)]
+pub struct FreePartsResponse {
+    pub success: bool,
+    pub data: Option<Vec<PartitionInfo>>,
+    pub error: Option<String>,
+}
+
 // lsblk 输出项
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DiskInfo {
@@ -476,4 +494,132 @@ pub async fn part_disk(
             error: Some(format!("Command error: {}", e)),
         }),
     }
+}
+
+// get_free_parts API - 返回空闲分区列表（需要 JWT 认证）
+#[get("/get_free_parts")]
+pub async fn get_free_parts(req: HttpRequest) -> impl Responder {
+    // 1. 验证 JWT token
+    let _claims = match extract_and_validate_token(&req) {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    // 2. 执行 lsblk -fpJ 命令获取所有分区信息
+    let output = match Command::new("lsblk")
+        .args(["-fpJ"])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(FreePartsResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to execute lsblk: {}", e)),
+            });
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return HttpResponse::InternalServerError().json(FreePartsResponse {
+            success: false,
+            data: None,
+            error: Some(format!("lsblk command failed: {}", stderr)),
+        });
+    }
+
+    // 3. 解析 JSON 输出
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lsblk_output: serde_json::Value = match serde_json::from_str(&stdout) {
+        Ok(val) => val,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(FreePartsResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to parse lsblk output: {}", e)),
+            });
+        }
+    };
+
+    // 4. 提取 blockdevices 数组
+    let blockdevices = match lsblk_output.get("blockdevices") {
+        Some(devices) => match devices.as_array() {
+            Some(arr) => arr,
+            None => {
+                return HttpResponse::InternalServerError().json(FreePartsResponse {
+                    success: false,
+                    data: None,
+                    error: Some("Invalid lsblk output format".to_string()),
+                });
+            }
+        },
+        None => {
+            return HttpResponse::InternalServerError().json(FreePartsResponse {
+                success: false,
+                data: None,
+                error: Some("No blockdevices found in lsblk output".to_string()),
+            });
+        }
+    };
+
+    // 5. 遍历所有设备和其子分区，收集 fstype 为 null 的分区
+    let mut free_parts: Vec<PartitionInfo> = Vec::new();
+
+    for device in blockdevices {
+        // 检查设备是否有 children（分区）
+        if let Some(children) = device.get("children").and_then(|c| c.as_array()) {
+            for child in children {
+                // 检查 fstype 是否为 null
+                if child.get("fstype").map(|f| f.is_null()).unwrap_or(true) {
+                    // 解析分区信息
+                    let name = child
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    
+                    let fstype = child
+                        .get("fstype")
+                        .and_then(|f| f.as_str())
+                        .map(|s| s.to_string());
+                    
+                    let label = child
+                        .get("label")
+                        .and_then(|l| l.as_str())
+                        .map(|s| s.to_string());
+                    
+                    let uuid = child
+                        .get("uuid")
+                        .and_then(|u| u.as_str())
+                        .map(|s| s.to_string());
+                    
+                    let mountpoints = child
+                        .get("mountpoints")
+                        .and_then(|m| m.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|m| m.as_str().map(|s| s.to_string()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    free_parts.push(PartitionInfo {
+                        name,
+                        fstype,
+                        label,
+                        uuid,
+                        mountpoints,
+                    });
+                }
+            }
+        }
+    }
+
+    // 6. 返回结果
+    HttpResponse::Ok().json(FreePartsResponse {
+        success: true,
+        data: Some(free_parts),
+        error: None,
+    })
 }
