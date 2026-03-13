@@ -9,10 +9,6 @@ use crate::jwt::extract_and_validate_token;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PartitionInfo {
     pub name: String,
-    pub fstype: Option<String>,
-    pub label: Option<String>,
-    pub uuid: Option<String>,
-    pub mountpoints: Vec<Option<String>>,
 }
 
 // get_free_parts 响应结构体
@@ -578,39 +574,8 @@ pub async fn get_free_parts(req: HttpRequest) -> impl Responder {
                         .and_then(|n| n.as_str())
                         .unwrap_or("")
                         .to_string();
-                    
-                    let fstype = child
-                        .get("fstype")
-                        .and_then(|f| f.as_str())
-                        .map(|s| s.to_string());
-                    
-                    let label = child
-                        .get("label")
-                        .and_then(|l| l.as_str())
-                        .map(|s| s.to_string());
-                    
-                    let uuid = child
-                        .get("uuid")
-                        .and_then(|u| u.as_str())
-                        .map(|s| s.to_string());
-                    
-                    let mountpoints = child
-                        .get("mountpoints")
-                        .and_then(|m| m.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .map(|m| m.as_str().map(|s| s.to_string()))
-                                .collect()
-                        })
-                        .unwrap_or_default();
 
-                    free_parts.push(PartitionInfo {
-                        name,
-                        fstype,
-                        label,
-                        uuid,
-                        mountpoints,
-                    });
+                    free_parts.push(PartitionInfo { name });
                 }
             }
         }
