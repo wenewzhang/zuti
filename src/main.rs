@@ -8,6 +8,7 @@ use std::process::Command;
 use uuid::Uuid;
 
 mod apis;
+mod disk;
 mod jwt;
 mod models;
 mod schema;
@@ -341,6 +342,7 @@ async fn main() -> std::io::Result<()> {
             .service(create_user)
             .service(login)
             .service(apis::disks::get_disks)
+            .service(apis::disks::get_free_disks)
     })
     .bind_openssl(&server_address, builder)?
     .run()

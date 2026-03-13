@@ -2,6 +2,7 @@ use actix_web::{get, HttpRequest, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
+use crate::disk::get_free_disks as get_free_disk_list;
 use crate::jwt::extract_and_validate_token;
 
 // lsblk 输出项
@@ -110,6 +111,34 @@ pub async fn get_disks(req: HttpRequest) -> impl Responder {
     HttpResponse::Ok().json(DisksResponse {
         success: true,
         data: Some(disks),
+        error: None,
+    })
+}
+
+// get_free_disks 响应结构体
+#[derive(Serialize)]
+pub struct FreeDisksResponse {
+    pub success: bool,
+    pub data: Option<Vec<String>>,
+    pub error: Option<String>,
+}
+
+// get_free_disks API - 返回空闲硬盘列表（需要 JWT 认证）
+#[get("/get_free_disks")]
+pub async fn get_free_disks(req: HttpRequest) -> impl Responder {
+    // 1. 验证 JWT token
+    let _claims = match extract_and_validate_token(&req) {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    // 2. 获取空闲硬盘列表
+    let free_disks = get_free_disk_list();
+
+    // 3. 返回结果
+    HttpResponse::Ok().json(FreeDisksResponse {
+        success: true,
+        data: Some(free_disks),
         error: None,
     })
 }
