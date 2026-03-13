@@ -1,4 +1,4 @@
-use actix_web::{get, HttpRequest, HttpResponse, Responder};
+use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
@@ -141,4 +141,109 @@ pub async fn get_free_disks(req: HttpRequest) -> impl Responder {
         data: Some(free_disks),
         error: None,
     })
+}
+
+// format_disk 请求结构体
+#[derive(Deserialize)]
+pub struct FormatDiskRequest {
+    pub disk_name: String,
+}
+
+// format_disk 响应结构体
+#[derive(Serialize)]
+pub struct FormatDiskResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+// format_disk API - 格式化空闲硬盘（需要 JWT 认证）
+#[post("/format_disk")]
+pub async fn format_disk(
+    req: HttpRequest,
+    format_req: web::Json<FormatDiskRequest>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _claims = match extract_and_validate_token(&req) {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    let disk_name = &format_req.disk_name;
+
+    // 2. 验证磁盘名称合法性（只允许字母数字）
+    if !disk_name.chars().all(|c| c.is_alphanumeric()) {
+        return HttpResponse::BadRequest().json(FormatDiskResponse {
+            success: false,
+            message: "Invalid disk name format".to_string(),
+            error: Some("Disk name must be alphanumeric".to_string()),
+        });
+    }
+
+    // 3. 检查硬盘是否在空闲硬盘列表中
+    let free_disks = get_free_disk_list();
+    if !free_disks.contains(&disk_name.to_string()) {
+        return HttpResponse::BadRequest().json(FormatDiskResponse {
+            success: false,
+            message: format!("Disk '{}' is not available for formatting", disk_name),
+            error: Some("Disk is either in use by ZFS or does not exist".to_string()),
+        });
+    }
+
+    // 4. 执行格式化命令
+    // 4.1 先用 wipefs -a 清除
+    let device_path = format!("/dev/{}", disk_name);
+    let wipefs_output = match Command::new("wipefs")
+        .args(["-a", &device_path])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(FormatDiskResponse {
+                success: false,
+                message: "Failed to execute wipefs command".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    if !wipefs_output.status.success() {
+        let stderr = String::from_utf8_lossy(&wipefs_output.stderr);
+        return HttpResponse::InternalServerError().json(FormatDiskResponse {
+            success: false,
+            message: format!("Failed to wipe disk '{}'", disk_name),
+            error: Some(stderr.to_string()),
+        });
+    }
+
+    // 4.2 再用 sgdisk -Z 清空分区表
+    let sgdisk_output = match Command::new("sgdisk")
+        .args(["-Z", &device_path])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(FormatDiskResponse {
+                success: false,
+                message: "Failed to execute sgdisk command".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    // 5. 检查格式化结果
+    if sgdisk_output.status.success() {
+        HttpResponse::Ok().json(FormatDiskResponse {
+            success: true,
+            message: format!("Disk '{}' formatted successfully (wiped and partition table cleared)", disk_name),
+            error: None,
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&sgdisk_output.stderr);
+        HttpResponse::InternalServerError().json(FormatDiskResponse {
+            success: false,
+            message: format!("Failed to clear partition table on disk '{}'", disk_name),
+            error: Some(stderr.to_string()),
+        })
+    }
 }

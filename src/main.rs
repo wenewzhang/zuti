@@ -343,6 +343,7 @@ async fn main() -> std::io::Result<()> {
             .service(login)
             .service(apis::disks::get_disks)
             .service(apis::disks::get_free_disks)
+            .service(apis::disks::format_disk)
     })
     .bind_openssl(&server_address, builder)?
     .run()

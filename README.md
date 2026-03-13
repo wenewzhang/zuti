@@ -12,8 +12,15 @@ curl -k -X POST https://192.168.3.248:8443/users     -H "Content-Type: applicati
 
 get_disks
 ```
-  curl -k https://127.0.0.1:8443/get_disks \
-    -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczMjc4NzQ5LCJleHAiOjE3NzU4NzA3NDksImp0aSI6ImE2YzE2Y2VmLTU5ZWQtNDY5ZS1iYWNhLTQxOGJkZGY0YmIwYSJ9.-YiTJQ0HnsPhoB_A7aQaZIpK484ZWi2nRw1uFOmJimM"
+  curl -k https://192.168.3.248:8443/get_disks \
+    -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczMzYzNjk5LCJleHAiOjE3NzU5NTU2OTksImp0aSI6IjA0OGM2OWFjLWRkOGYtNGFmZC04YmFmLWNmNTU2MzliZjI0YyJ9.FYk5E-a2MbHQlT-2yUKeqwexmOq8t6J4U0GK2JS2UJY"
+
+```
+
+get free disks
+```
+  curl -k https://192.168.3.248:8443/get_free_disks \
+    -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczMzYzNjk5LCJleHAiOjE3NzU5NTU2OTksImp0aSI6IjA0OGM2OWFjLWRkOGYtNGFmZC04YmFmLWNmNTU2MzliZjI0YyJ9.FYk5E-a2MbHQlT-2yUKeqwexmOq8t6J4U0GK2JS2UJY"
 
 ```
 
