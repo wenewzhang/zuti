@@ -389,6 +389,54 @@ pub async fn part_disk(
     // 确定大小参数
     let size_arg = if size.to_lowercase() == "100%" || size == "0" {
         "0".to_string() // 0 表示使用剩余所有空间
+    } else if size.ends_with('%') {
+        // 处理百分比：1% 到 99%
+        let percent_str = &size[..size.len()-1];
+        if let Ok(percent) = percent_str.parse::<u64>() {
+            if percent >= 1 && percent <= 99 {
+                // 获取磁盘总大小（字节）
+                match Command::new("blockdev")
+                    .args(["--getsize64", &device_path])
+                    .output() 
+                {
+                    Ok(output) => {
+                        let size_str = String::from_utf8_lossy(&output.stdout);
+                        if let Ok(total_bytes) = size_str.trim().parse::<u64>() {
+                            // 计算百分比对应的大小（字节）
+                            let calc_bytes = total_bytes * percent / 100;
+                            // 转换为扇区数（假设扇区大小为512字节）
+                            let sectors = calc_bytes / 512;
+                            sectors.to_string()
+                        } else {
+                            return HttpResponse::InternalServerError().json(PartDiskResponse {
+                                success: false,
+                                message: "Failed to parse disk size".to_string(),
+                                error: Some("Invalid blockdev output".to_string()),
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        return HttpResponse::InternalServerError().json(PartDiskResponse {
+                            success: false,
+                            message: "Failed to get disk size".to_string(),
+                            error: Some(format!("blockdev error: {}", e)),
+                        });
+                    }
+                }
+            } else {
+                return HttpResponse::BadRequest().json(PartDiskResponse {
+                    success: false,
+                    message: "Invalid percentage".to_string(),
+                    error: Some("Percentage must be between 1 and 99".to_string()),
+                });
+            }
+        } else {
+            return HttpResponse::BadRequest().json(PartDiskResponse {
+                success: false,
+                message: "Invalid percentage format".to_string(),
+                error: Some("Failed to parse percentage".to_string()),
+            });
+        }
     } else {
         size.clone()
     };
