@@ -280,3 +280,152 @@ pub async fn format_disk(
         }),
     }
 }
+
+// part_disk 请求结构体
+#[derive(Deserialize)]
+pub struct PartDiskRequest {
+    pub disk_name: String,
+    pub size: String, // 例如: "10G", "500M", "100%"(使用剩余所有空间)
+}
+
+// part_disk 响应结构体
+#[derive(Serialize)]
+pub struct PartDiskResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+// part_disk API - 在硬盘上创建新的 ZFS 分区（需要 JWT 认证）
+#[post("/part_disk")]
+pub async fn part_disk(
+    req: HttpRequest,
+    part_req: web::Json<PartDiskRequest>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _claims = match extract_and_validate_token(&req) {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    let disk_name = &part_req.disk_name;
+    let size = &part_req.size;
+
+    // 2. 验证磁盘名称合法性（只允许字母数字）
+    if !disk_name.chars().all(|c| c.is_alphanumeric()) {
+        return HttpResponse::BadRequest().json(PartDiskResponse {
+            success: false,
+            message: "Invalid disk name format".to_string(),
+            error: Some("Disk name must be alphanumeric".to_string()),
+        });
+    }
+
+    // 3. 验证 size 格式（支持 G/M/K 或百分比）
+    // 格式: 数字 + 可选的单位(G/M/K) 或 数字 + % 或 0
+    let size_lower = size.to_lowercase();
+    let is_valid_size = if size_lower == "0" || size_lower == "100%" {
+        true
+    } else if size_lower.ends_with('%') {
+        size_lower[..size_lower.len()-1].parse::<u64>().is_ok()
+    } else if size_lower.ends_with('g') || size_lower.ends_with('m') || size_lower.ends_with('k') {
+        size_lower[..size_lower.len()-1].parse::<u64>().is_ok()
+    } else {
+        size_lower.parse::<u64>().is_ok()
+    };
+    
+    if !is_valid_size {
+        return HttpResponse::BadRequest().json(PartDiskResponse {
+            success: false,
+            message: "Invalid size format".to_string(),
+            error: Some("Size must be like '10G', '500M', '100%' or '0' (for remaining space)".to_string()),
+        });
+    }
+
+    let device_path = format!("/dev/{}", disk_name);
+
+    // 4. 获取当前分区信息以确定下一个分区号
+    let parted_output = match Command::new("parted")
+        .args(["-s", &device_path, "print"])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(PartDiskResponse {
+                success: false,
+                message: "Failed to get partition info".to_string(),
+                error: Some(format!("parted error: {}", e)),
+            });
+        }
+    };
+
+    // 解析 parted 输出获取最大分区号
+    let parted_stdout = String::from_utf8_lossy(&parted_output.stdout);
+    let mut max_part_num = 0;
+    
+    for line in parted_stdout.lines() {
+        // 查找形如 " 1 " 或 " 1\t" 开头的行（分区号）
+        let trimmed = line.trim();
+        if let Some(first_char) = trimmed.chars().next() {
+            if first_char.is_ascii_digit() {
+                // 提取分区号
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if let Some(num_str) = parts.first() {
+                    if let Ok(num) = num_str.parse::<u32>() {
+                        if num > max_part_num {
+                            max_part_num = num;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let next_part_num = max_part_num + 1;
+
+    // 5. 使用 sgdisk 创建新分区
+    // ZFS 分区类型 GUID: 6A898CC3-1DD2-11B2-99A6-080020736631 (Solaris /usr & Mac ZFS)
+    // 或者使用短代码 bf01
+    
+    // 确定大小参数
+    let size_arg = if size.to_lowercase() == "100%" || size == "0" {
+        "0".to_string() // 0 表示使用剩余所有空间
+    } else {
+        size.clone()
+    };
+
+    // 构建 sgdisk 命令: -n <partnum>:<start>:<size> -t <partnum>:<type>
+    // start=0 表示从第一个可用扇区开始
+    let sgdisk_output = Command::new("sgdisk")
+        .args([
+            "-n", &format!("{}:0:{}", next_part_num, size_arg),
+            "-t", &format!("{}:bf01", next_part_num),
+            &device_path,
+        ])
+        .output();
+
+    match sgdisk_output {
+        Ok(result) if result.status.success() => {
+            HttpResponse::Ok().json(PartDiskResponse {
+                success: true,
+                message: format!(
+                    "Created ZFS partition {} on disk '{}' with size '{}'",
+                    next_part_num, disk_name, size
+                ),
+                error: None,
+            })
+        }
+        Ok(result) => {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            HttpResponse::InternalServerError().json(PartDiskResponse {
+                success: false,
+                message: format!("Failed to create partition on disk '{}'", disk_name),
+                error: Some(stderr.to_string()),
+            })
+        }
+        Err(e) => HttpResponse::InternalServerError().json(PartDiskResponse {
+            success: false,
+            message: "Failed to execute sgdisk command".to_string(),
+            error: Some(format!("Command error: {}", e)),
+        }),
+    }
+}
