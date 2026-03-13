@@ -16,3 +16,8 @@ get_disks
     -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczMjc4NzQ5LCJleHAiOjE3NzU4NzA3NDksImp0aSI6ImE2YzE2Y2VmLTU5ZWQtNDY5ZS1iYWNhLTQxOGJkZGY0YmIwYSJ9.-YiTJQ0HnsPhoB_A7aQaZIpK484ZWi2nRw1uFOmJimM"
 
 ```
+
+find free disk partition
+```
+lsblk -fp |awk 'NR>1 && $2=="" {print $0}'
+```
