@@ -5,7 +5,7 @@ use std::process::Command;
 /// 通过 zpool status -v 命令获取 ZFS 池使用的磁盘设备
 pub fn get_zfs_disks() -> Vec<String> {
     let output = Command::new("zpool")
-        .args(&["status", "-v"])
+        .args(&["status", "-L"])
         .output();
     
     let mut result = Vec::new();
