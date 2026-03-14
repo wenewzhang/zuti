@@ -467,6 +467,9 @@ pub async fn part_disk(
 
     match sgdisk_output {
         Ok(result) if result.status.success() => {
+            // 执行 partprobe 刷新分区表
+            let _ = Command::new("partprobe").arg(&device_path).output();
+            
             HttpResponse::Ok().json(PartDiskResponse {
                 success: true,
                 message: format!(
