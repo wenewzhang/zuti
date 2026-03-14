@@ -802,7 +802,7 @@ pub async fn create_pool(
     }
 
     // 6. 构建 zpool create 命令
-    let mut args: Vec<String> = vec!["zpool".to_string(), "create".to_string(), "-f".to_string(), "-o".to_string(), "ashift=12".to_string()];
+    let mut args: Vec<String> = vec!["create".to_string(), "-f".to_string(), "-o".to_string(), "ashift=12".to_string()];
 
     match pool_type.as_str() {
         "pool" => {
@@ -900,28 +900,6 @@ pub async fn destroy_pool(
             error: Some("Pool name must contain only alphanumeric characters, underscores, or hyphens".to_string()),
         });
     }
-
-    // 3. 先执行 zpool export -f <pool_name>
-    let export_output = match Command::new("zpool")
-        .args(["export", "-f", pool_name])
-        .output()
-    {
-        Ok(result) => result,
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(DestroyPoolResponse {
-                success: false,
-                message: "Failed to execute zpool export command".to_string(),
-                error: Some(format!("Command error: {}", e)),
-            });
-        }
-    };
-
-    // export 失败不影响继续执行 destroy（可能池已经 exported 或不存在）
-    let export_stderr = if !export_output.status.success() {
-        Some(String::from_utf8_lossy(&export_output.stderr).to_string())
-    } else {
-        None
-    };
 
     // 4. 执行 zpool destroy <pool_name>
     let destroy_output = match Command::new("zpool")
