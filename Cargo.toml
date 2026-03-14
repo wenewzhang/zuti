@@ -14,3 +14,4 @@ uuid = { version = "1", features = ["v4"] }
 jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
 chrono = "0.4"
 pam = "0.8"
+regex = "1"

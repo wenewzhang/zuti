@@ -2827,6 +2827,7 @@ dependencies = [
  "jsonwebtoken",
  "openssl",
  "pam",
+ "regex",
  "serde",
  "serde_json",
  "uuid",
