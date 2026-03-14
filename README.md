@@ -50,3 +50,20 @@ curl -k -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiO
       https://192.168.3.248:8443/get_free_parts
 
 ```
+
+
+```
+  curl -k -X POST https://192.168.3.248:8443/part_disk \
+   -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczMzYzNjk5LCJleHAiOjE3NzU5NTU2OTksImp0aSI6IjA0OGM2OWFjLWRkOGYtNGFmZC04YmFmLWNmNTU2MzliZjI0YyJ9.FYk5E-a2MbHQlT-2yUKeqwexmOq8t6J4U0GK2JS2UJY"  \
+    -H "Content-Type: application/json" \
+    -d '{"pool_name":"datapool","pool_type":"raid2","devices":["sda","sdb","sdc","sdd"]}'
+
+```
+
+```
+  curl -k -X POST https://192.168.3.248:8443/part_disk \
+   -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczMzYzNjk5LCJleHAiOjE3NzU5NTU2OTksImp0aSI6IjA0OGM2OWFjLWRkOGYtNGFmZC04YmFmLWNmNTU2MzliZjI0YyJ9.FYk5E-a2MbHQlT-2yUKeqwexmOq8t6J4U0GK2JS2UJY"  \
+    -H "Content-Type: application/json" \
+    -d '{"pool_name":"datapool"}'
+
+```

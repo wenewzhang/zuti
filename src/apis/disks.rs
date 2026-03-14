@@ -591,3 +591,369 @@ pub async fn get_free_parts(req: HttpRequest) -> impl Responder {
         error: None,
     })
 }
+
+// create_pool 请求结构体
+#[derive(Deserialize)]
+pub struct CreatePoolRequest {
+    pub pool_name: String,
+    pub pool_type: String, // pool, mirror, raid1, raid2, raid3
+    pub devices: Vec<String>, // 如 ["sda", "nvme0n1", "sdb1"]
+}
+
+// create_pool 响应结构体
+#[derive(Serialize)]
+pub struct CreatePoolResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// 在 /dev/disk/by-id/ 下查找设备的长 ID
+fn find_disk_by_id(device: &str) -> Result<String, String> {
+    let is_partition = device.chars().last().map(|c| c.is_ascii_digit()).unwrap_or(false);
+    let device_path = format!("/dev/{}", device);
+    
+    let entries = match std::fs::read_dir("/dev/disk/by-id/") {
+        Ok(entries) => entries,
+        Err(e) => return Err(format!("Failed to read /dev/disk/by-id/: {}", e)),
+    };
+    
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        
+        let path = entry.path();
+        let file_name = match entry.file_name().into_string() {
+            Ok(name) => name,
+            Err(_) => continue,
+        };
+        
+        if file_name.starts_with("scsi-") || file_name.starts_with("ata-") || 
+           file_name.starts_with("nvme-") || file_name.starts_with("wwn-") {
+            match std::fs::canonicalize(&path) {
+                Ok(real_path) => {
+                    if is_partition {
+                        if real_path.to_string_lossy().ends_with(device) {
+                            if file_name.starts_with("ata-") || file_name.starts_with("nvme-eui.") {
+                                return Ok(path.to_string_lossy().to_string());
+                            }
+                        }
+                    } else {
+                        let real_path_str = real_path.to_string_lossy();
+                        if real_path_str == device_path {
+                            if file_name.starts_with("ata-") || 
+                               (file_name.starts_with("nvme-") && !file_name.contains("-part")) {
+                                return Ok(path.to_string_lossy().to_string());
+                            }
+                        }
+                    }
+                }
+                Err(_) => continue,
+            }
+        }
+    }
+    
+    Err(format!("Cannot find long ID for device '{}' in /dev/disk/by-id/", device))
+}
+
+/// 查找设备的分区 long ID
+fn find_partition_by_id(disk_name: &str, part_suffix: &str) -> Result<String, String> {
+    let device_path = format!("/dev/{}{}", disk_name, part_suffix);
+    
+    let entries = match std::fs::read_dir("/dev/disk/by-id/") {
+        Ok(entries) => entries,
+        Err(e) => return Err(format!("Failed to read /dev/disk/by-id/: {}", e)),
+    };
+    
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        
+        let path = entry.path();
+        let file_name = match entry.file_name().into_string() {
+            Ok(name) => name,
+            Err(_) => continue,
+        };
+        
+        if file_name.contains("-part") {
+            match std::fs::canonicalize(&path) {
+                Ok(real_path) => {
+                    if real_path.to_string_lossy() == device_path {
+                        return Ok(path.to_string_lossy().to_string());
+                    }
+                }
+                Err(_) => continue,
+            }
+        }
+    }
+    
+    Err(format!("Cannot find partition ID for '{}{}'", disk_name, part_suffix))
+}
+
+/// 获取设备的 by-id 路径
+fn get_device_by_id(device: &str) -> Result<String, String> {
+    let is_partition = device.chars().last().map(|c| c.is_ascii_digit()).unwrap_or(false);
+    
+    if is_partition {
+        if device.starts_with("nvme") {
+            if let Some(pos) = device.rfind('p') {
+                let disk_name = &device[..pos];
+                let part_suffix = &device[pos..]; // 包含 p
+                return find_partition_by_id(disk_name, part_suffix);
+            }
+        } else {
+            let chars: Vec<char> = device.chars().collect();
+            let mut num_start = chars.len();
+            for (i, c) in chars.iter().enumerate().rev() {
+                if c.is_ascii_digit() {
+                    num_start = i;
+                } else {
+                    break;
+                }
+            }
+            if num_start < chars.len() {
+                let disk_name: String = chars[..num_start].iter().collect();
+                let part_num: String = chars[num_start..].iter().collect();
+                return find_partition_by_id(&disk_name, &part_num);
+            }
+        }
+    }
+    
+    find_disk_by_id(device)
+}
+
+// create_pool API - 创建 ZFS 存储池（需要 JWT 认证）
+#[post("/create_pool")]
+pub async fn create_pool(
+    req: HttpRequest,
+    pool_req: web::Json<CreatePoolRequest>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _claims = match extract_and_validate_token(&req) {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    let pool_name = &pool_req.pool_name;
+    let pool_type = pool_req.pool_type.to_lowercase();
+    let devices = &pool_req.devices;
+
+    // 2. 验证池名称合法性
+    if !pool_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+        return HttpResponse::BadRequest().json(CreatePoolResponse {
+            success: false,
+            message: "Invalid pool name format".to_string(),
+            error: Some("Pool name must contain only alphanumeric characters, underscores, or hyphens".to_string()),
+        });
+    }
+
+    // 3. 验证 pool_type 和设备数量
+    let min_devices = match pool_type.as_str() {
+        "pool" => 1,
+        "mirror" => 2,
+        "raid1" => 3,
+        "raid2" => 4,
+        "raid3" => 5,
+        _ => {
+            return HttpResponse::BadRequest().json(CreatePoolResponse {
+                success: false,
+                message: "Invalid pool type".to_string(),
+                error: Some("Pool type must be one of: pool, mirror, raid1, raid2, raid3".to_string()),
+            });
+        }
+    };
+
+    if devices.len() < min_devices {
+        return HttpResponse::BadRequest().json(CreatePoolResponse {
+            success: false,
+            message: format!("Pool type '{}' requires at least {} devices", pool_type, min_devices),
+            error: Some(format!("Only {} devices provided, but {} required", devices.len(), min_devices)),
+        });
+    }
+
+    // 4. 验证设备名称合法性
+    for device in devices {
+        if !device.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+            return HttpResponse::BadRequest().json(CreatePoolResponse {
+                success: false,
+                message: format!("Invalid device name: {}", device),
+                error: Some("Device name must be alphanumeric".to_string()),
+            });
+        }
+    }
+
+    // 5. 查找设备的 by-id 路径
+    let mut device_by_ids: Vec<String> = Vec::new();
+    for device in devices {
+        match get_device_by_id(device) {
+            Ok(id_path) => device_by_ids.push(id_path),
+            Err(e) => {
+                return HttpResponse::BadRequest().json(CreatePoolResponse {
+                    success: false,
+                    message: format!("Failed to resolve device: {}", device),
+                    error: Some(e),
+                });
+            }
+        }
+    }
+
+    // 6. 构建 zpool create 命令
+    let mut args: Vec<String> = vec!["zpool".to_string(), "create".to_string(), "-f".to_string(), "-o".to_string(), "ashift=12".to_string()];
+
+    match pool_type.as_str() {
+        "pool" => {
+            args.push(pool_name.clone());
+            args.extend(device_by_ids);
+        }
+        "mirror" => {
+            args.push(pool_name.clone());
+            args.push("mirror".to_string());
+            args.extend(device_by_ids);
+        }
+        "raid1" => {
+            args.push(pool_name.clone());
+            args.push("raidz1".to_string());
+            args.extend(device_by_ids);
+        }
+        "raid2" => {
+            args.push(pool_name.clone());
+            args.push("raidz2".to_string());
+            args.extend(device_by_ids);
+        }
+        "raid3" => {
+            args.push(pool_name.clone());
+            args.push("raidz3".to_string());
+            args.extend(device_by_ids);
+        }
+        _ => unreachable!(),
+    }
+
+    // 7. 执行 zpool create 命令
+    let output = match Command::new("zpool").args(&args).output() {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(CreatePoolResponse {
+                success: false,
+                message: "Failed to execute zpool create command".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        HttpResponse::Ok().json(CreatePoolResponse {
+            success: true,
+            message: format!(
+                "Successfully created ZFS pool '{}' of type '{}' with {} device(s)",
+                pool_name, pool_type, devices.len()
+            ),
+            error: if stdout.is_empty() { None } else { Some(stdout.to_string()) },
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        HttpResponse::InternalServerError().json(CreatePoolResponse {
+            success: false,
+            message: format!("Failed to create ZFS pool '{}'", pool_name),
+            error: Some(stderr.to_string()),
+        })
+    }
+}
+
+// destroy_pool 请求结构体
+#[derive(Deserialize)]
+pub struct DestroyPoolRequest {
+    pub pool_name: String,
+}
+
+// destroy_pool 响应结构体
+#[derive(Serialize)]
+pub struct DestroyPoolResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+// destroy_pool API - 销毁 ZFS 存储池（需要 JWT 认证）
+#[post("/destroy_pool")]
+pub async fn destroy_pool(
+    req: HttpRequest,
+    destroy_req: web::Json<DestroyPoolRequest>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _claims = match extract_and_validate_token(&req) {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    let pool_name = &destroy_req.pool_name;
+
+    // 2. 验证池名称合法性（只允许字母数字、下划线和连字符）
+    if !pool_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+        return HttpResponse::BadRequest().json(DestroyPoolResponse {
+            success: false,
+            message: "Invalid pool name format".to_string(),
+            error: Some("Pool name must contain only alphanumeric characters, underscores, or hyphens".to_string()),
+        });
+    }
+
+    // 3. 先执行 zpool export -f <pool_name>
+    let export_output = match Command::new("zpool")
+        .args(["export", "-f", pool_name])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(DestroyPoolResponse {
+                success: false,
+                message: "Failed to execute zpool export command".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    // export 失败不影响继续执行 destroy（可能池已经 exported 或不存在）
+    let export_stderr = if !export_output.status.success() {
+        Some(String::from_utf8_lossy(&export_output.stderr).to_string())
+    } else {
+        None
+    };
+
+    // 4. 执行 zpool destroy <pool_name>
+    let destroy_output = match Command::new("zpool")
+        .args(["destroy", pool_name])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(DestroyPoolResponse {
+                success: false,
+                message: "Failed to execute zpool destroy command".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    if destroy_output.status.success() {
+        let mut message = format!("Successfully destroyed ZFS pool '{}'", pool_name);
+        if let Some(export_err) = export_stderr {
+            message.push_str(&format!(" (export warning: {})", export_err));
+        }
+        HttpResponse::Ok().json(DestroyPoolResponse {
+            success: true,
+            message,
+            error: None,
+        })
+    } else {
+        let destroy_stderr = String::from_utf8_lossy(&destroy_output.stderr);
+        HttpResponse::InternalServerError().json(DestroyPoolResponse {
+            success: false,
+            message: format!("Failed to destroy ZFS pool '{}'", pool_name),
+            error: Some(destroy_stderr.to_string()),
+        })
+    }
+}
