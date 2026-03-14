@@ -917,13 +917,9 @@ pub async fn destroy_pool(
     };
 
     if destroy_output.status.success() {
-        let mut message = format!("Successfully destroyed ZFS pool '{}'", pool_name);
-        if let Some(export_err) = export_stderr {
-            message.push_str(&format!(" (export warning: {})", export_err));
-        }
         HttpResponse::Ok().json(DestroyPoolResponse {
             success: true,
-            message,
+            message: format!("Successfully destroyed ZFS pool '{}'", pool_name),
             error: None,
         })
     } else {
