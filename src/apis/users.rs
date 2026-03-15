@@ -307,6 +307,10 @@ pub struct LogoutResponse {
 // 登出接口
 #[post("/logout")]
 pub async fn logout(pool: web::Data<DbPool>, req: HttpRequest) -> impl Responder {
+        // 验证 JWT token
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
     // 1. 验证 JWT token
     let claims = match crate::jwt::extract_and_validate_token(&req) {
         Ok(claims) => claims,

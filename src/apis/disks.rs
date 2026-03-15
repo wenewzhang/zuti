@@ -44,7 +44,7 @@ pub struct DisksResponse {
 
 /// 验证 JWT token 并检查其与数据库中存储的 token 是否匹配
 /// 返回 Ok(claims) 如果验证成功，否则返回 Err(HttpResponse)
-async fn validate_token_with_db(
+pub async fn validate_token_with_db(
     req: &HttpRequest,
     pool: &web::Data<crate::DbPool>,
 ) -> Result<crate::jwt::Claims, HttpResponse> {
@@ -562,11 +562,10 @@ pub async fn part_disk(
 // get_free_parts API - 返回空闲分区列表（需要 JWT 认证）
 #[get("/get_free_parts")]
 pub async fn get_free_parts(req: HttpRequest) -> impl Responder {
-    // 1. 验证 JWT token
-    let _claims = match extract_and_validate_token(&req) {
-        Ok(claims) => claims,
-        Err(response) => return response,
-    };
+    // 验证 JWT token
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
 
     // 2. 执行 lsblk -fpJ 命令获取所有分区信息
     let output = match Command::new("lsblk")
