@@ -4,7 +4,7 @@ use std::process::Command;
 
 use crate::disk::get_free_disks as get_free_disk_list;
 use crate::jwt::extract_and_validate_token;
-use crate::utils::verify_password;
+
 
 // 分区信息结构体
 #[derive(Serialize, Deserialize, Debug)]
@@ -869,7 +869,6 @@ pub async fn create_pool(
 #[derive(Deserialize)]
 pub struct DestroyPoolRequest {
     pub pool_name: String,
-    pub root_password: String,
 }
 
 // destroy_pool 响应结构体
@@ -893,7 +892,6 @@ pub async fn destroy_pool(
     };
 
     let pool_name = &destroy_req.pool_name;
-    let root_password = &destroy_req.root_password;
 
     // 2. 验证池名称合法性（只允许字母数字、下划线和连字符）
     if !pool_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
@@ -904,16 +902,7 @@ pub async fn destroy_pool(
         });
     }
 
-    // 3. 验证 root 密码
-    if !verify_password("root", root_password) {
-        return HttpResponse::Unauthorized().json(DestroyPoolResponse {
-            success: false,
-            message: "Root password verification failed".to_string(),
-            error: Some("Invalid root password".to_string()),
-        });
-    }
-
-    // 4. 执行 zpool destroy <pool_name>
+    // 3. 执行 zpool destroy <pool_name>
     let destroy_output = match Command::new("zpool")
         .args(["destroy", pool_name])
         .output()
