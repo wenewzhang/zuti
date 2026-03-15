@@ -12,6 +12,7 @@ mod disk;
 mod jwt;
 mod models;
 mod schema;
+mod utils;
 
 use models::{NewUser, User, UserInsert};
 use schema::users::dsl::*;
@@ -129,31 +130,7 @@ fn check_system_user(username: &str) -> bool {
     }
 }
 
-// 验证 Linux 系统用户密码（使用 PAM）
-fn verify_system_password(username: &str, user_password: &str) -> bool {
-    use pam::Client;
 
-    // 创建 PAM 客户端，使用系统默认的认证服务
-    let mut client = match Client::with_password("system-auth") {
-        Ok(client) => client,
-        Err(_) => {
-            // 如果 system-auth 不可用，尝试其他常见服务名
-            match Client::with_password("login") {
-                Ok(client) => client,
-                Err(_) => return false,
-            }
-        }
-    };
-
-    // 设置用户名和密码
-    client.conversation_mut().set_credentials(username, user_password);
-
-    // 执行认证
-    match client.authenticate() {
-        Ok(_) => true,
-        Err(_) => false,
-    }
-}
 
 // 创建 Linux 系统用户并设置密码
 fn create_system_user(username: &str, user_password: &str) -> Result<(), String> {
@@ -227,7 +204,7 @@ async fn login(pool: web::Data<DbPool>, login_req: web::Json<LoginRequest>) -> i
                 }
                 
                 // 3. 使用 Linux 系统验证密码（不再比较数据库中的密码）
-                if verify_system_password(&user.name, &req_password) {
+                if utils::verify_password(&user.name, &req_password) {
                     // 4. 生成 JWT token
                     let now = Utc::now();
                     let token_id = Uuid::new_v4().to_string();
