@@ -1,7 +1,18 @@
+use actix_web::{http::header::ContentType, HttpRequest, HttpResponse};
 use diesel::prelude::*;
+use serde::Serialize;
 
+use crate::jwt::extract_and_validate_token;
 use crate::models::User;
 use crate::schema::users::dsl::*;
+
+/// 通用错误响应结构体
+#[derive(Serialize)]
+pub struct ErrorResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
 
 /// 检查用户是否为 admin
 ///
@@ -46,3 +57,57 @@ impl std::fmt::Display for AdminCheckError {
 }
 
 impl std::error::Error for AdminCheckError {}
+
+/// 验证 JWT token 并检查用户是否为 admin
+/// 
+/// # Arguments
+/// * `req` - HTTP 请求
+/// * `pool` - 数据库连接池
+/// 
+/// # Returns
+/// * `Ok(String)` - 验证通过，返回用户名
+/// * `Err(HttpResponse)` - 验证失败，返回错误响应
+pub fn verify_admin_access(
+    req: &HttpRequest,
+    pool: &crate::DbPool,
+) -> Result<String, HttpResponse> {
+    // 1. 验证 JWT token
+    let claims = match extract_and_validate_token(req) {
+        Ok(claims) => claims,
+        Err(response) => return Err(response),
+    };
+
+    // 2. 检查用户是否为 admin
+    let username = claims.sub;
+    
+    match is_admin(pool, &username) {
+        Ok(true) => Ok(username),
+        Ok(false) => {
+            Err(HttpResponse::Forbidden()
+                .content_type(ContentType::json())
+                .body(serde_json::to_string(&ErrorResponse {
+                    success: false,
+                    message: "Permission denied".to_string(),
+                    error: Some("Only admin users can perform this operation".to_string()),
+                }).unwrap()))
+        }
+        Err(AdminCheckError::UserNotFound) => {
+            Err(HttpResponse::Unauthorized()
+                .content_type(ContentType::json())
+                .body(serde_json::to_string(&ErrorResponse {
+                    success: false,
+                    message: "User not found".to_string(),
+                    error: Some("User does not exist".to_string()),
+                }).unwrap()))
+        }
+        Err(AdminCheckError::DatabaseError) => {
+            Err(HttpResponse::InternalServerError()
+                .content_type(ContentType::json())
+                .body(serde_json::to_string(&ErrorResponse {
+                    success: false,
+                    message: "Database error".to_string(),
+                    error: Some("Failed to query user information".to_string()),
+                }).unwrap()))
+        }
+    }
+}

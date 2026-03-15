@@ -1,4 +1,4 @@
-use actix_web::{post, web, HttpResponse, Responder};
+use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use chrono::{Duration, Utc};
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -36,8 +36,8 @@ pub struct CreateUserResponse {
 }
 
 // 创建用户
-#[post("/users")]
-pub async fn create_user(pool: web::Data<DbPool>, new_user: web::Json<NewUser>) -> impl Responder {
+#[post("/admin_user")]
+pub async fn create_admin_user(pool: web::Data<DbPool>, new_user: web::Json<NewUser>) -> impl Responder {
     let pool = pool.get_ref().clone();
     let user_data = new_user.into_inner();
     
@@ -154,6 +154,147 @@ pub fn create_system_user(username: &str, user_password: &str) -> Result<(), Str
     }
     
     Ok(())
+}
+
+// 新增用户请求结构体（仅 admin 可调用）
+#[derive(Deserialize)]
+pub struct AddUserRequest {
+    pub username: String,
+    pub password: String,
+    pub user_type: String, // "read" 或 "share"
+}
+
+// 新增用户响应结构体
+#[derive(Serialize)]
+pub struct AddUserResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// 新增用户 API（仅 admin 可调用）
+/// 
+/// 创建 read 或 share 类型的用户，同时创建 Linux 系统用户
+/// 密码仅存储在 Linux 系统中，数据库只保存用户名和类型
+#[post("/add_user")]
+pub async fn add_user(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    user_req: web::Json<AddUserRequest>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _admin_username = match utils::verify_admin_access(&req, &pool) {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let username = &user_req.username;
+    let user_password = &user_req.password;
+    let user_type = &user_req.user_type;
+
+    // 2. 验证用户类型只能是 read 或 share
+    if user_type != "read" && user_type != "share" {
+        return HttpResponse::BadRequest().json(AddUserResponse {
+            success: false,
+            message: "Invalid user type".to_string(),
+            error: Some("User type must be 'read' or 'share'".to_string()),
+        });
+    }
+
+    // 3. 验证用户名合法性（只允许字母数字、下划线）
+    if !username.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return HttpResponse::BadRequest().json(AddUserResponse {
+            success: false,
+            message: "Invalid username format".to_string(),
+            error: Some("Username must contain only alphanumeric characters or underscores".to_string()),
+        });
+    }
+
+    // 4. 检查用户名是否已存在
+    let pool_clone = pool.get_ref().clone();
+    let username_clone = username.clone();
+    let user_type_clone = user_type.clone();
+    
+    let check_result: Result<bool, String> = web::block(move || {
+        let mut conn = pool_clone.get().map_err(|e| format!("Database connection error: {}", e))?;
+        
+        let existing: Option<User> = users
+            .filter(name.eq(&username_clone))
+            .first::<User>(&mut conn)
+            .optional()
+            .map_err(|e| format!("Database query error: {}", e))?;
+        
+        Ok(existing.is_some())
+    })
+    .await
+    .unwrap();
+
+    match check_result {
+        Ok(true) => {
+            return HttpResponse::Conflict().json(AddUserResponse {
+                success: false,
+                message: "User already exists".to_string(),
+                error: Some(format!("Username '{}' is already taken", username)),
+            });
+        }
+        Ok(false) => {}
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(AddUserResponse {
+                success: false,
+                message: "Database error".to_string(),
+                error: Some(e),
+            });
+        }
+    }
+
+    // 5. 创建 Linux 系统用户并设置密码
+    if let Err(e) = create_system_user(username, user_password) {
+        return HttpResponse::InternalServerError().json(AddUserResponse {
+            success: false,
+            message: "Failed to create system user".to_string(),
+            error: Some(e),
+        });
+    }
+
+    // 6. 插入数据库（只存用户名和类型，不存密码）
+    let pool_clone = pool.get_ref().clone();
+    let username_clone = username.clone();
+    
+    let insert_result: Result<(), String> = web::block(move || {
+        let mut conn = pool_clone.get().map_err(|e| format!("Database connection error: {}", e))?;
+        
+        let user_insert = UserInsert {
+            name: username_clone,
+            type_: user_type_clone,
+        };
+        
+        diesel::insert_into(users)
+            .values(&user_insert)
+            .execute(&mut conn)
+            .map_err(|e| format!("Failed to insert user: {}", e))?;
+        
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    match insert_result {
+        Ok(_) => {
+            HttpResponse::Created().json(AddUserResponse {
+                success: true,
+                message: format!("User '{}' created successfully with type '{}'", username, user_type),
+                error: None,
+            })
+        }
+        Err(e) => {
+            // 数据库插入失败，但 Linux 用户已创建
+            HttpResponse::InternalServerError().json(AddUserResponse {
+                success: false,
+                message: "Database insert failed, but system user was created".to_string(),
+                error: Some(e),
+            })
+        }
+    }
 }
 
 // 登录接口
