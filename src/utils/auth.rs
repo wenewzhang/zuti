@@ -1,4 +1,24 @@
 use pam::Client;
+use std::process::Command;
+
+/// 验证 Linux 系统用户是否存在（使用 id 命令）
+/// 
+/// # Arguments
+/// * `username` - 用户名
+/// 
+/// # Returns
+/// * `true` - 用户存在
+/// * `false` - 用户不存在
+pub fn check_system_user(username: &str) -> bool {
+    let output = Command::new("id")
+        .arg(username)
+        .output();
+    
+    match output {
+        Ok(result) => result.status.success(),
+        Err(_) => false,
+    }
+}
 
 /// 验证用户密码（使用 PAM 认证）
 /// 
