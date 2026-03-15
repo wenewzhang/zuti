@@ -184,7 +184,7 @@ pub async fn add_user(
     user_req: web::Json<AddUserRequest>,
 ) -> impl Responder {
     // 1. 验证 JWT token 并检查 admin 权限
-    let _admin_username = match utils::verify_admin_access(&req, &pool) {
+    let _admin_username = match utils::verify_admin_access(&req, &pool).await {
         Ok(username) => username,
         Err(response) => return response,
     };

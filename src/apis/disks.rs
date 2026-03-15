@@ -178,7 +178,7 @@ pub async fn format_disk(
     pool: web::Data<crate::DbPool>,    
 ) -> impl Responder {
     // 1. 验证 JWT token 并检查 admin 权限
-    let _username = match crate::utils::verify_admin_access(&req, &pool) {
+    let _username = match crate::utils::verify_admin_access(&req, &pool).await {
         Ok(username) => username,
         Err(response) => return response,
     };
@@ -318,7 +318,7 @@ pub async fn part_disk(
     pool: web::Data<crate::DbPool>,
 ) -> impl Responder {
     // 1. 验证 JWT token 并检查 admin 权限
-    let _username = match crate::utils::verify_admin_access(&req, &pool) {
+    let _username = match crate::utils::verify_admin_access(&req, &pool).await {
         Ok(username) => username,
         Err(response) => return response,
     };
@@ -734,7 +734,7 @@ pub async fn create_pool(
     pool: web::Data<crate::DbPool>,
 ) -> impl Responder {
     // 1. 验证 JWT token 并检查 admin 权限
-    let _username = match crate::utils::verify_admin_access(&req, &pool) {
+    let _username = match crate::utils::verify_admin_access(&req, &pool).await {
         Ok(username) => username,
         Err(response) => return response,
     };
@@ -887,7 +887,7 @@ pub async fn destroy_pool(
     pool: web::Data<crate::DbPool>,
 ) -> impl Responder {
     // 1. 验证 JWT token 并检查 admin 权限
-    let _username = match crate::utils::verify_admin_access(&req, &pool) {
+    let _username = match crate::utils::verify_admin_access(&req, &pool).await {
         Ok(username) => username,
         Err(response) => return response,
     };

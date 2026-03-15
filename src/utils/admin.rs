@@ -131,12 +131,12 @@ pub async fn validate_token_with_db(
 /// # Returns
 /// * `Ok(String)` - 验证通过，返回用户名
 /// * `Err(HttpResponse)` - 验证失败，返回错误响应
-pub fn verify_admin_access(
+pub async fn verify_admin_access(
     req: &HttpRequest,
-    pool: &crate::DbPool,
+    pool: &web::Data<crate::DbPool>,
 ) -> Result<String, HttpResponse> {
-    // 1. 验证 JWT token
-    let claims = match extract_and_validate_token(req) {
+    // 1. 验证 JWT token（包括数据库验证）
+    let claims = match validate_token_with_db(req, pool).await {
         Ok(claims) => claims,
         Err(response) => return Err(response),
     };
@@ -144,7 +144,7 @@ pub fn verify_admin_access(
     // 2. 检查用户是否为 admin
     let username = claims.sub;
     
-    match is_admin(pool, &username) {
+    match is_admin(pool.get_ref(), &username) {
         Ok(true) => Ok(username),
         Ok(false) => {
             Err(HttpResponse::Forbidden()
