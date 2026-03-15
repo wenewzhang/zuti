@@ -11,6 +11,7 @@ use crate::schema;
 use crate::schema::users::dsl::*;
 use crate::utils;
 use crate::DbPool;
+use crate::apis::disks::validate_token_with_db;
 
 // 登录请求结构体
 #[derive(Deserialize)]

@@ -561,7 +561,7 @@ pub async fn part_disk(
 
 // get_free_parts API - 返回空闲分区列表（需要 JWT 认证）
 #[get("/get_free_parts")]
-pub async fn get_free_parts(req: HttpRequest) -> impl Responder {
+pub async fn get_free_parts(req: HttpRequest, pool: web::Data<crate::DbPool>) -> impl Responder {
     // 验证 JWT token
     if let Err(response) = validate_token_with_db(&req, &pool).await {
         return response;
