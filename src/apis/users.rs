@@ -297,6 +297,52 @@ pub async fn add_user(
     }
 }
 
+// 登出响应结构体
+#[derive(Serialize)]
+pub struct LogoutResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+// 登出接口
+#[post("/logout")]
+pub async fn logout(pool: web::Data<DbPool>, req: HttpRequest) -> impl Responder {
+    // 1. 验证 JWT token
+    let claims = match crate::jwt::extract_and_validate_token(&req) {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    let username = claims.sub;
+    let pool_clone = pool.get_ref().clone();
+    let username_clone = username.clone();
+
+    // 2. 将用户的 token 清空
+    let result: Result<(), String> = web::block(move || {
+        let mut conn = pool_clone.get().map_err(|e| format!("Database connection error: {}", e))?;
+
+        diesel::update(users.filter(name.eq(&username_clone)))
+            .set(schema::users::token.eq(None::<String>))
+            .execute(&mut conn)
+            .map_err(|e| format!("Failed to clear token: {}", e))?;
+
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    match result {
+        Ok(_) => HttpResponse::Ok().json(LogoutResponse {
+            success: true,
+            message: format!("User '{}' logged out successfully", username),
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(LogoutResponse {
+            success: false,
+            message: e,
+        }),
+    }
+}
+
 // 登录接口
 #[post("/login")]
 pub async fn login(pool: web::Data<DbPool>, login_req: web::Json<LoginRequest>) -> impl Responder {

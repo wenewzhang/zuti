@@ -81,3 +81,10 @@ add user
     }'
 
 ```
+
+logout
+```
+  curl -k -X POST https://192.168.3.100:8443/logout \
+      -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczMzYzNjk5LCJleHAiOjE3NzU5NTU2OTksImp0aSI6IjA0OGM2OWFjLWRkOGYtNGFmZC04YmFmLWNmNTU2MzliZjI0YyJ9.FYk5E-a2MbHQlT-2yUKeqwexmOq8t6J4U0GK2JS2UJY"
+
+```

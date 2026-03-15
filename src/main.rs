@@ -98,6 +98,7 @@ async fn main() -> std::io::Result<()> {
             .service(apis::users::create_admin_user)
             .service(apis::users::add_user)
             .service(apis::users::login)
+            .service(apis::users::logout)
             .service(apis::disks::get_disks)
             .service(apis::disks::get_free_disks)
             .service(apis::disks::get_free_parts)
