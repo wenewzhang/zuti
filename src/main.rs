@@ -18,7 +18,7 @@ use models::{NewUser, User, UserInsert};
 use schema::users::dsl::*;
 
 // 数据库连接池类型
-type DbPool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
+pub type DbPool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
 
 #[derive(Serialize)]
 struct PingResponse {

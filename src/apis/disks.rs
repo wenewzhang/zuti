@@ -177,10 +177,11 @@ pub struct DeleteDiskResponse {
 pub async fn format_disk(
     req: HttpRequest,
     format_req: web::Json<FormatDiskRequest>,
+    pool: web::Data<crate::DbPool>,    
 ) -> impl Responder {
-    // 1. 验证 JWT token
-    let _claims = match extract_and_validate_token(&req) {
-        Ok(claims) => claims,
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _username = match verify_admin_access(&req, &pool) {
+        Ok(username) => username,
         Err(response) => return response,
     };
 
@@ -316,10 +317,11 @@ pub struct PartDiskResponse {
 pub async fn part_disk(
     req: HttpRequest,
     part_req: web::Json<PartDiskRequest>,
+    pool: web::Data<crate::DbPool>,
 ) -> impl Responder {
-    // 1. 验证 JWT token
-    let _claims = match extract_and_validate_token(&req) {
-        Ok(claims) => claims,
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _username = match verify_admin_access(&req, &pool) {
+        Ok(username) => username,
         Err(response) => return response,
     };
 
@@ -732,10 +734,11 @@ fn get_device_by_id(device: &str) -> Result<String, String> {
 pub async fn create_pool(
     req: HttpRequest,
     pool_req: web::Json<CreatePoolRequest>,
+    pool: web::Data<crate::DbPool>,
 ) -> impl Responder {
-    // 1. 验证 JWT token
-    let _claims = match extract_and_validate_token(&req) {
-        Ok(claims) => claims,
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _username = match verify_admin_access(&req, &pool) {
+        Ok(username) => username,
         Err(response) => return response,
     };
 
@@ -879,15 +882,60 @@ pub struct DestroyPoolResponse {
     pub error: Option<String>,
 }
 
-// destroy_pool API - 销毁 ZFS 存储池（需要 JWT 认证）
+/// 验证 JWT token 并检查用户是否为 admin
+/// 
+/// # Returns
+/// * `Ok(String)` - 验证通过，返回用户名
+/// * `Err(HttpResponse)` - 验证失败，返回错误响应
+fn verify_admin_access(
+    req: &HttpRequest,
+    pool: &web::Data<crate::DbPool>,
+) -> Result<String, HttpResponse> {
+    // 1. 验证 JWT token
+    let claims = match extract_and_validate_token(req) {
+        Ok(claims) => claims,
+        Err(response) => return Err(response),
+    };
+
+    // 2. 检查用户是否为 admin
+    let username = claims.sub;
+    
+    match crate::utils::is_admin(pool, &username) {
+        Ok(true) => Ok(username),
+        Ok(false) => {
+            Err(HttpResponse::Forbidden().json(DestroyPoolResponse {
+                success: false,
+                message: "Permission denied".to_string(),
+                error: Some("Only admin users can destroy pools".to_string()),
+            }))
+        }
+        Err(crate::utils::AdminCheckError::UserNotFound) => {
+            Err(HttpResponse::Unauthorized().json(DestroyPoolResponse {
+                success: false,
+                message: "User not found".to_string(),
+                error: Some("User does not exist".to_string()),
+            }))
+        }
+        Err(crate::utils::AdminCheckError::DatabaseError) => {
+            Err(HttpResponse::InternalServerError().json(DestroyPoolResponse {
+                success: false,
+                message: "Database error".to_string(),
+                error: Some("Failed to query user information".to_string()),
+            }))
+        }
+    }
+}
+
+// destroy_pool API - 销毁 ZFS 存储池（需要 JWT 认证，仅管理员可用）
 #[post("/destroy_pool")]
 pub async fn destroy_pool(
     req: HttpRequest,
     destroy_req: web::Json<DestroyPoolRequest>,
+    pool: web::Data<crate::DbPool>,
 ) -> impl Responder {
-    // 1. 验证 JWT token
-    let _claims = match extract_and_validate_token(&req) {
-        Ok(claims) => claims,
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _username = match verify_admin_access(&req, &pool) {
+        Ok(username) => username,
         Err(response) => return response,
     };
 
