@@ -11,7 +11,7 @@ use crate::schema;
 use crate::schema::users::dsl::*;
 use crate::utils;
 use crate::DbPool;
-use crate::apis::disks::validate_token_with_db;
+use crate::utils::admin::validate_token_with_db;
 
 // 登录请求结构体
 #[derive(Deserialize)]
@@ -309,14 +309,12 @@ pub struct LogoutResponse {
 #[post("/logout")]
 pub async fn logout(pool: web::Data<DbPool>, req: HttpRequest) -> impl Responder {
         // 验证 JWT token
-    if let Err(response) = validate_token_with_db(&req, &pool).await {
-        return response;
-    }
-    // 1. 验证 JWT token
-    let claims = match crate::jwt::extract_and_validate_token(&req) {
-        Ok(claims) => claims,
-        Err(response) => return response,
-    };
+      // 验证 JWT token 并获取 claims
+      let claims = match validate_token_with_db(&req, &pool).await {
+          Ok(claims) => claims,
+          Err(response) => return response,
+      };
+
 
     let username = claims.sub;
     let pool_clone = pool.get_ref().clone();

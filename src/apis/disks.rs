@@ -1,12 +1,9 @@
 use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
-use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
 use crate::disk::get_free_disks as get_free_disk_list;
-use crate::jwt::extract_and_validate_token;
-use crate::models::User;
-use crate::schema::users;
+use crate::utils::admin::validate_token_with_db;
 
 
 // 分区信息结构体
@@ -40,65 +37,6 @@ pub struct DisksResponse {
     pub success: bool,
     pub data: Option<Vec<DiskInfo>>,
     pub error: Option<String>,
-}
-
-/// 验证 JWT token 并检查其与数据库中存储的 token 是否匹配
-/// 返回 Ok(claims) 如果验证成功，否则返回 Err(HttpResponse)
-pub async fn validate_token_with_db(
-    req: &HttpRequest,
-    pool: &web::Data<crate::DbPool>,
-) -> Result<crate::jwt::Claims, HttpResponse> {
-    // 1. 验证 JWT token
-    let claims = match extract_and_validate_token(req) {
-        Ok(claims) => claims,
-        Err(response) => return Err(response),
-    };
-
-    // 2. 验证 token 是否有效（比较 claims.jti 与数据库中的 token）
-    let username = claims.sub.clone();
-    let token_jti = claims.jti.clone();
-    
-    let pool_clone = pool.get_ref().clone();
-    
-    let token_valid: Result<bool, String> = web::block(move || {
-        let mut conn = pool_clone.get().map_err(|e| format!("Database connection error: {}", e))?;
-        
-        let user: Option<User> = users::table
-            .filter(users::name.eq(&username))
-            .first::<User>(&mut conn)
-            .optional()
-            .map_err(|e| format!("Database query error: {}", e))?;
-        
-        match user {
-            Some(u) => {
-                match u.token {
-                    Some(stored_token) => Ok(stored_token == token_jti),
-                    None => Ok(false),
-                }
-            }
-            None => Ok(false),
-        }
-    })
-    .await
-    .unwrap();
-
-    match token_valid {
-        Ok(true) => Ok(claims),
-        Ok(false) => {
-            Err(HttpResponse::Unauthorized().json(DisksResponse {
-                success: false,
-                data: None,
-                error: Some("Invalid token".to_string()),
-            }))
-        }
-        Err(e) => {
-            Err(HttpResponse::InternalServerError().json(DisksResponse {
-                success: false,
-                data: None,
-                error: Some(e),
-            }))
-        }
-    }
 }
 
 // get_disks API - 返回硬盘信息（需要 JWT 认证）
@@ -201,13 +139,12 @@ pub struct FreeDisksResponse {
 
 // get_free_disks API - 返回空闲硬盘列表（需要 JWT 认证）
 #[get("/get_free_disks")]
-pub async fn get_free_disks(req: HttpRequest) -> impl Responder {
+pub async fn get_free_disks(req: HttpRequest, pool: web::Data<crate::DbPool>) -> impl Responder {
     // 1. 验证 JWT token
-    let _claims = match extract_and_validate_token(&req) {
+    let _claims = match validate_token_with_db(&req, &pool).await {
         Ok(claims) => claims,
         Err(response) => return response,
     };
-
     // 2. 获取空闲硬盘列表
     let free_disks = get_free_disk_list();
 

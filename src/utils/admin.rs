@@ -1,9 +1,10 @@
-use actix_web::{http::header::ContentType, HttpRequest, HttpResponse};
+use actix_web::{http::header::ContentType, web, HttpRequest, HttpResponse};
 use diesel::prelude::*;
 use serde::Serialize;
 
 use crate::jwt::extract_and_validate_token;
 use crate::models::User;
+use crate::schema::users;
 use crate::schema::users::dsl::*;
 
 /// 通用错误响应结构体
@@ -57,6 +58,69 @@ impl std::fmt::Display for AdminCheckError {
 }
 
 impl std::error::Error for AdminCheckError {}
+
+/// 验证 JWT token 并检查其与数据库中存储的 token 是否匹配
+/// 返回 Ok(claims) 如果验证成功，否则返回 Err(HttpResponse)
+pub async fn validate_token_with_db(
+    req: &HttpRequest,
+    pool: &web::Data<crate::DbPool>,
+) -> Result<crate::jwt::Claims, HttpResponse> {
+    // 1. 验证 JWT token
+    let claims = match extract_and_validate_token(req) {
+        Ok(claims) => claims,
+        Err(response) => return Err(response),
+    };
+
+    // 2. 验证 token 是否有效（比较 claims.jti 与数据库中的 token）
+    let username = claims.sub.clone();
+    let token_jti = claims.jti.clone();
+    
+    let pool_clone = pool.get_ref().clone();
+    
+    let token_valid: Result<bool, String> = web::block(move || {
+        let mut conn = pool_clone.get().map_err(|e| format!("Database connection error: {}", e))?;
+        
+        let user: Option<User> = users::table
+            .filter(users::name.eq(&username))
+            .first::<User>(&mut conn)
+            .optional()
+            .map_err(|e| format!("Database query error: {}", e))?;
+        
+        match user {
+            Some(u) => {
+                match u.token {
+                    Some(stored_token) => Ok(stored_token == token_jti),
+                    None => Ok(false),
+                }
+            }
+            None => Ok(false),
+        }
+    })
+    .await
+    .unwrap();
+
+    match token_valid {
+        Ok(true) => Ok(claims),
+        Ok(false) => {
+            Err(HttpResponse::Unauthorized()
+                .content_type(ContentType::json())
+                .body(serde_json::to_string(&ErrorResponse {
+                    success: false,
+                    message: "Invalid token".to_string(),
+                    error: Some("Token validation failed".to_string()),
+                }).unwrap()))
+        }
+        Err(e) => {
+            Err(HttpResponse::InternalServerError()
+                .content_type(ContentType::json())
+                .body(serde_json::to_string(&ErrorResponse {
+                    success: false,
+                    message: "Database error".to_string(),
+                    error: Some(e),
+                }).unwrap()))
+        }
+    }
+}
 
 /// 验证 JWT token 并检查用户是否为 admin
 /// 
