@@ -104,7 +104,7 @@ if [ ! -f /etc/zuti/.env ]; then
     else
         # 创建默认 .env 文件
         cat > /etc/zuti/.env << 'ENVFILE'
-DATABASE_URL=sqlite:///.data/zuti/zuti.db
+DATABASE_URL=sqlite:///.data/zuti/db.sqlite
 CERT_PATH=/etc/zuti/certs/server.crt
 KEY_PATH=/etc/zuti/certs/server.key
 SERVER_ADDRESS=127.0.0.1:8443
