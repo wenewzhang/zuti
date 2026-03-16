@@ -5,11 +5,14 @@ use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use serde::Serialize;
 
 mod apis;
+mod config;
 mod disk;
 mod jwt;
 mod models;
 mod schema;
 mod utils;
+
+use config::logger;
 
 use models::User;
 use schema::users::dsl::*;
@@ -38,11 +41,15 @@ async fn index() -> impl Responder {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // 初始化日志
+    logger::init_logger();
+    
     // 加载 .env 文件
     dotenvy::dotenv().ok();
     
     // 设置数据库连接池
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    log::info!("Database URL: {}", database_url);
     
     // 读取服务器地址
     let server_address = std::env::var("SERVER_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8443".to_string());
@@ -81,6 +88,9 @@ async fn main() -> std::io::Result<()> {
     let cert_file = std::env::var("CERT_FILE").unwrap_or_else(|_| "certs/cert.pem".to_string());
     let key_file = std::env::var("KEY_FILE").unwrap_or_else(|_| "certs/key.pem".to_string());
     
+    log::info!("Certificate file: {}", cert_file);
+    log::info!("Key file: {}", key_file);
+    
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
     builder
         .set_private_key_file(&key_file, SslFiletype::PEM)
@@ -89,6 +99,7 @@ async fn main() -> std::io::Result<()> {
         .set_certificate_chain_file(&cert_file)
         .unwrap();
 
+    log::info!("HTTPS Server running at https://{}", server_address);
     println!("HTTPS Server running at https://{}", server_address);
     println!("Try: curl -k https://{}/ping", server_address);
     println!("Database connected: {}", database_url);
