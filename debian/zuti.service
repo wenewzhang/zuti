@@ -4,9 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
-User=zuti
-Group=zuti
-WorkingDirectory=/var/lib/zuti
+User=root
+Group=root
+WorkingDirectory=/.data/zuti
 Environment="RUST_LOG=info"
 EnvironmentFile=-/etc/zuti/.env
 ExecStart=/usr/bin/zuti
@@ -21,7 +21,7 @@ SyslogIdentifier=zuti
 NoNewPrivileges=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/zuti /var/log/zuti
+ReadWritePaths=/.data/zuti /var/log/zuti
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
