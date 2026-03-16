@@ -3,6 +3,10 @@ use diesel::prelude::*;
 use diesel::r2d2::{self, ConnectionManager};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use serde::Serialize;
+use dotenvy::{dotenv, from_path};
+use std::env;
+use std::path::Path;
+
 
 mod apis;
 mod config;
@@ -44,17 +48,16 @@ async fn main() -> std::io::Result<()> {
     // 初始化日志
     logger::init_logger();
     
-    // 加载 .env 文件
-    match dotenvy::dotenv() {
-        Ok(path) => {
-            if let Some(dir) = path.parent() {
-                log::info!(".env file loaded from directory: {}", dir.display());
-            }
-        }
-        Err(e) => {
-            log::warn!("Failed to load .env file: {}", e);
-        }
-    };
+    let env_path = Path::new("/etc/zuti/.env");
+    if env_path.exists() {
+        log::info!("Loading env from: {}", env_path.display());
+        from_path(env_path).ok();
+    } else {
+        log::info!("Env file not found at: {}, falling back to default .env", env_path.display());
+        // 方式2：回退到默认的 .env
+        dotenv().ok();
+    }
+
     
     // 设置数据库连接池
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
