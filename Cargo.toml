@@ -2,27 +2,23 @@
 name = "zuti"
 version = "0.1.0"
 edition = "2024"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["Wenew Zhang<wenewboy@gmail.com>"]
 description = "Zuti - Storage management web service"
 license = "MIT"
 repository = "https://github.com/yourusername/zuti"
 
 [package.metadata.deb]
-maintainer = "Your Name <your.email@example.com>"
+maintainer = "Wenew Zhang<wenewboy@gmail.com>"
 copyright = "2026 Your Name"
 extended-description = "A web service for disk and storage pool management"
 section = "admin"
 priority = "optional"
 assets = [
     ["target/release/zuti", "usr/bin/zuti", "755"],
-    ["certs/server.crt", "etc/zuti/certs/server.crt", "644"],
-    ["certs/server.key", "etc/zuti/certs/server.key", "600"],
-    ["migrations/*", "usr/share/zuti/migrations/", "644"],
+    ["migrations/", "usr/share/zuti/migrations/", "644"],
     [".env.example", "etc/zuti/.env.example", "644"],
 ]
-maintainer-scripts = "debian/scripts"
-systemd-units = { unit-name = "zuti", enable = false }
-depends = "$auto"
+depends = "libc6, libssl3 | libssl1.1, libpam0g, openssl"
 
 [dependencies]
 actix-web = { version = "4.13.0", features = ["openssl"] }
