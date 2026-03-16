@@ -107,10 +107,12 @@ if [ ! -f /etc/zuti/.env ]; then
 DATABASE_URL=sqlite:///.data/zuti/zuti.db
 CERT_PATH=/etc/zuti/certs/server.crt
 KEY_PATH=/etc/zuti/certs/server.key
-HOST=0.0.0.0
-PORT=8443
+SERVER_ADDRESS=127.0.0.1:8443
+JWT_SECRET=your_secret_key_change_in_production
 ENVFILE
     fi
+    RANDOM_SECRET=$(openssl rand -base64 32)
+    sed -i "s|your_secret_key_change_in_production|${RANDOM_SECRET}|g" /etc/zuti/.env
 fi
 
 # 重新加载 systemd 并启动服务
