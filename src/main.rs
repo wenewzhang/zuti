@@ -45,7 +45,16 @@ async fn main() -> std::io::Result<()> {
     logger::init_logger();
     
     // 加载 .env 文件
-    dotenvy::dotenv().ok();
+    match dotenvy::dotenv() {
+        Ok(path) => {
+            if let Some(dir) = path.parent() {
+                log::info!(".env file loaded from directory: {}", dir.display());
+            }
+        }
+        Err(e) => {
+            log::warn!("Failed to load .env file: {}", e);
+        }
+    };
     
     // 设置数据库连接池
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
