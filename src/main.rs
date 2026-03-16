@@ -78,12 +78,15 @@ async fn main() -> std::io::Result<()> {
     }
 
     // 加载 TLS 证书
+    let cert_file = std::env::var("CERT_FILE").unwrap_or_else(|_| "certs/cert.pem".to_string());
+    let key_file = std::env::var("KEY_FILE").unwrap_or_else(|_| "certs/key.pem".to_string());
+    
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
     builder
-        .set_private_key_file("certs/key.pem", SslFiletype::PEM)
+        .set_private_key_file(&key_file, SslFiletype::PEM)
         .unwrap();
     builder
-        .set_certificate_chain_file("certs/cert.pem")
+        .set_certificate_chain_file(&cert_file)
         .unwrap();
 
     println!("HTTPS Server running at https://{}", server_address);
