@@ -17,7 +17,7 @@ mkdir -p "${BUILD_DIR}/usr/bin"
 mkdir -p "${BUILD_DIR}/etc/zuti/certs"
 mkdir -p "${BUILD_DIR}/lib/systemd/system"
 mkdir -p "${BUILD_DIR}/usr/share/zuti/migrations"
-mkdir -p "${BUILD_DIR}/var/lib/zuti"
+mkdir -p "${BUILD_DIR}/.data/zuti"
 mkdir -p "${BUILD_DIR}/var/log/zuti"
 
 # 构建 release 二进制
@@ -34,6 +34,7 @@ cp "debian/zuti.service" "${BUILD_DIR}/lib/systemd/system/"
 
 mkdir -p db
 diesel database setup --database-url=sqlite://./db/db.sqlite
+cp "db/db.sqlite" "${BUILD_DIR}/.data/zuti/"
 # 创建 control 文件
 cat > "${BUILD_DIR}/DEBIAN/control" << EOF
 Package: zuti
@@ -52,10 +53,7 @@ EOF
 cat > "${BUILD_DIR}/DEBIAN/preinst" << 'EOF'
 #!/bin/bash
 set -e
-if ! id -u zuti >/dev/null 2>&1; then
-    useradd -r -s /bin/false -M -d /var/lib/zuti zuti 2>/dev/null || true
-fi
-mkdir -p /etc/zuti/certs /var/lib/zuti /var/log/zuti
+mkdir -p /etc/zuti/certs /.data/zuti /var/log/zuti
 exit 0
 EOF
 
@@ -70,7 +68,7 @@ CERT_FILE="${CERT_DIR}/server.crt"
 
 # 设置目录权限
 chown -R root:root /etc/zuti 2>/dev/null || chown -R root:root /etc/zuti
-chown -R root:root /var/lib/zuti 2>/dev/null || chown -R root:root /var/lib/zuti
+chown -R root:root /.data/zuti 2>/dev/null || chown -R root:root /.data/zuti
 chown -R root:root /var/log/zuti 2>/dev/null || chown -R root:root /var/log/zuti
 
 # 生成 SSL 证书（如果不存在）
@@ -106,7 +104,7 @@ if [ ! -f /etc/zuti/.env ]; then
     else
         # 创建默认 .env 文件
         cat > /etc/zuti/.env << 'ENVFILE'
-DATABASE_URL=sqlite:///var/lib/zuti/zuti.db
+DATABASE_URL=sqlite:///.data/zuti/zuti.db
 CERT_PATH=/etc/zuti/certs/server.crt
 KEY_PATH=/etc/zuti/certs/server.key
 HOST=0.0.0.0
@@ -128,7 +126,7 @@ echo "zuti has been installed successfully!"
 echo "=========================================="
 echo "Configuration file: /etc/zuti/.env"
 echo "Certificates: ${CERT_DIR}"
-echo "Data directory: /var/lib/zuti"
+echo "Data directory: /.data/zuti"
 echo ""
 echo "Service commands:"
 echo "  sudo systemctl start zuti"
@@ -162,7 +160,7 @@ if [ "$1" = "purge" ]; then
     if id -u zuti >/dev/null 2>&1; then
         userdel zuti 2>/dev/null || true
     fi
-    rm -rf /var/lib/zuti /var/log/zuti
+    rm -rf /.data/zuti /var/log/zuti
     # 可选：删除证书（注释掉以保留证书）
     # rm -rf /etc/zuti/certs
     echo "zuti data has been removed."
