@@ -16,7 +16,7 @@ mkdir -p "${BUILD_DIR}/DEBIAN"
 mkdir -p "${BUILD_DIR}/usr/bin"
 mkdir -p "${BUILD_DIR}/etc/zuti/certs"
 mkdir -p "${BUILD_DIR}/lib/systemd/system"
-mkdir -p "${BUILD_DIR}/usr/share/zuti/migrations"
+mkdir -p "${BUILD_DIR}/etc/zuti/migrations"
 mkdir -p "${BUILD_DIR}/.data/zuti"
 mkdir -p "${BUILD_DIR}/var/log/zuti"
 
@@ -28,7 +28,7 @@ cargo build --release
 echo "Copying files..."
 cp "target/release/zuti" "${BUILD_DIR}/usr/bin/"
 # 证书将在安装时由 openssl 生成，不在此处复制
-cp "migrations/"* "${BUILD_DIR}/usr/share/zuti/migrations/" 2>/dev/null || true
+cp "migrations/"* "${BUILD_DIR}/etc/zuti/migrations/" 2>/dev/null || true
 cp ".env.example" "${BUILD_DIR}/etc/zuti/" 2>/dev/null || true
 cp "debian/zuti.service" "${BUILD_DIR}/lib/systemd/system/"
 
@@ -63,8 +63,8 @@ cat > "${BUILD_DIR}/DEBIAN/postinst" << 'EOF'
 set -e
 
 CERT_DIR="/etc/zuti/certs"
-KEY_FILE="${CERT_DIR}/server.key"
-CERT_FILE="${CERT_DIR}/server.crt"
+KEY_FILE="${CERT_DIR}/key.pem"
+CERT_FILE="${CERT_DIR}/cert.pem"
 
 # 设置目录权限
 chown -R root:root /etc/zuti 2>/dev/null || chown -R root:root /etc/zuti
@@ -99,14 +99,14 @@ if [ ! -f /etc/zuti/.env ]; then
     if [ -f /etc/zuti/.env.example ]; then
         cp /etc/zuti/.env.example /etc/zuti/.env
         # 确保证书路径指向正确位置
-        sed -i 's|^CERT_PATH=.*|CERT_PATH=/etc/zuti/certs/server.crt|' /etc/zuti/.env
-        sed -i 's|^KEY_PATH=.*|KEY_PATH=/etc/zuti/certs/server.key|' /etc/zuti/.env
+        sed -i 's|^CERT_PATH=.*|CERT_PATH=/etc/zuti/certs/cert.pem|' /etc/zuti/.env
+        sed -i 's|^KEY_PATH=.*|KEY_PATH=/etc/zuti/certs/key.pem|' /etc/zuti/.env
     else
         # 创建默认 .env 文件
         cat > /etc/zuti/.env << 'ENVFILE'
 DATABASE_URL=sqlite:///.data/zuti/db.sqlite
-CERT_PATH=/etc/zuti/certs/server.crt
-KEY_PATH=/etc/zuti/certs/server.key
+CERT_PATH=/etc/zuti/certs/cert.pem
+KEY_PATH=/etc/zuti/certs/key.pem
 SERVER_ADDRESS=127.0.0.1:8443
 JWT_SECRET=your_secret_key_change_in_production
 ENVFILE
@@ -161,7 +161,7 @@ if [ "$1" = "purge" ]; then
     echo "Removing zuti data..."
     rm -rf /.data/zuti /var/log/zuti
     # 可选：删除证书（注释掉以保留证书）
-    # rm -rf /etc/zuti/certs
+    rm -rf /etc/zuti/certs
     echo "zuti data has been removed."
     echo "Note: Configuration files in /etc/zuti/ are preserved."
     echo "      Run 'sudo rm -rf /etc/zuti' to remove them."
