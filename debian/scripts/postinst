@@ -1,0 +1,33 @@
+#!/bin/bash
+set -e
+
+# 设置权限
+chown -R zuti:zuti /etc/zuti 2>/dev/null || chown -R root:root /etc/zuti
+chown -R zuti:zuti /var/lib/zuti 2>/dev/null || chown -R root:root /var/lib/zuti
+chown -R zuti:zuti /var/log/zuti 2>/dev/null || chown -R root:root /var/log/zuti
+
+# 如果 .env 不存在，复制示例文件
+if [ ! -f /etc/zuti/.env ]; then
+    cp /etc/zuti/.env.example /etc/zuti/.env
+fi
+
+# 重新加载 systemd
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload
+    
+    # 启用服务
+    systemctl enable zuti.service
+    
+    # 启动服务
+    systemctl start zuti.service || true
+fi
+
+echo "zuti has been installed."
+echo "Configuration file: /etc/zuti/.env"
+echo "Certificates: /etc/zuti/certs/"
+echo ""
+echo "To start/stop the service:"
+echo "  sudo systemctl start zuti"
+echo "  sudo systemctl stop zuti"
+
+exit 0

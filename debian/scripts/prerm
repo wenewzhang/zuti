@@ -1,0 +1,10 @@
+#!/bin/bash
+set -e
+
+# 停止服务
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop zuti.service || true
+    systemctl disable zuti.service || true
+fi
+
+exit 0

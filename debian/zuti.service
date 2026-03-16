@@ -1,0 +1,30 @@
+[Unit]
+Description=Zuti Storage Management Service
+After=network.target
+
+[Service]
+Type=simple
+User=zuti
+Group=zuti
+WorkingDirectory=/var/lib/zuti
+Environment="RUST_LOG=info"
+EnvironmentFile=-/etc/zuti/.env
+ExecStart=/usr/bin/zuti
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zuti
+
+# Security hardening
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/zuti /var/log/zuti
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target
