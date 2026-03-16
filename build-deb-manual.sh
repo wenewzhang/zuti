@@ -159,9 +159,6 @@ cat > "${BUILD_DIR}/DEBIAN/postrm" << 'EOF'
 set -e
 if [ "$1" = "purge" ]; then
     echo "Removing zuti data..."
-    if id -u zuti >/dev/null 2>&1; then
-        userdel zuti 2>/dev/null || true
-    fi
     rm -rf /.data/zuti /var/log/zuti
     # 可选：删除证书（注释掉以保留证书）
     # rm -rf /etc/zuti/certs
