@@ -17,6 +17,7 @@ assets = [
     ["target/release/zuti", "usr/bin/zuti", "755"],
     ["migrations/", "usr/share/zuti/migrations/", "644"],
     [".env.example", "etc/zuti/.env.example", "644"],
+    ["db.sqlite", "usr/share/zuti/db/db.sqlite", "644"],
 ]
 depends = "libc6, libssl3 | libssl1.1, libpam0g, openssl"
 

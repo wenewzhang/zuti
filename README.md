@@ -1,25 +1,25 @@
 创建用户
 ```
-curl -k -X POST https://192.168.3.248:8443/admin_user     -H "Content-Type: application/json"     -d '{"name": "myadmin", "type_": "admin", "password":"123321"}'
+curl -k -X POST https://192.168.3.100:8443/admin_user     -H "Content-Type: application/json"     -d '{"name": "myadmin", "type_": "admin", "password":"123321"}'
 ```
 
 登陆
 ```
-  curl -k -X POST https://192.168.3.248:8443/login \
+  curl -k -X POST https://192.168.3.100:8443/login \
       -H "Content-Type: application/json" \
       -d '{"username": "myadmin", "password": "123321"}'
 ```
 
 get_disks
 ```
-  curl -k https://192.168.3.248:8443/get_disks \
+  curl -k https://192.168.3.100:8443/get_disks \
     -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczMzYzNjk5LCJleHAiOjE3NzU5NTU2OTksImp0aSI6IjA0OGM2OWFjLWRkOGYtNGFmZC04YmFmLWNmNTU2MzliZjI0YyJ9.FYk5E-a2MbHQlT-2yUKeqwexmOq8t6J4U0GK2JS2UJY"
 
 ```
 
 get free disks
 ```
-  curl -k https://192.168.3.248:8443/get_free_disks \
+  curl -k https://192.168.3.100:8443/get_free_disks \
     -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczMzYzNjk5LCJleHAiOjE3NzU5NTU2OTksImp0aSI6IjA0OGM2OWFjLWRkOGYtNGFmZC04YmFmLWNmNTU2MzliZjI0YyJ9.FYk5E-a2MbHQlT-2yUKeqwexmOq8t6J4U0GK2JS2UJY"
 
 ```
@@ -27,10 +27,10 @@ get free disks
 Delete disk
 ```
   curl -k -X POST \
-      -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczMzYzNjk5LCJleHAiOjE3NzU5NTU2OTksImp0aSI6IjA0OGM2OWFjLWRkOGYtNGFmZC04YmFmLWNmNTU2MzliZjI0YyJ9.FYk5E-a2MbHQlT-2yUKeqwexmOq8t6J4U0GK2JS2UJY" \
+      -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczNTgzMDM0LCJleHAiOjE3NzYxNzUwMzQsImp0aSI6ImQzZGYyYmYyLTdhNjQtNDMyOS05MWEyLWY4YzcxZDcyOGFiMiJ9.K3f7IzcLqi9aO9WR0bY52riSZOYgaoY7Uvc-kg2eAHI" \
       -H "Content-Type: application/json" \
       -d '{"disk_name": "nvme0n1"}' \
-      https://192.168.3.248:8443/delete_disk
+      https://192.168.3.100:8443/delete_disk
 
 ```
 
@@ -40,20 +40,20 @@ Part disk
       -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczMzYzNjk5LCJleHAiOjE3NzU5NTU2OTksImp0aSI6IjA0OGM2OWFjLWRkOGYtNGFmZC04YmFmLWNmNTU2MzliZjI0YyJ9.FYk5E-a2MbHQlT-2yUKeqwexmOq8t6J4U0GK2JS2UJY" \
       -H "Content-Type: application/json" \
       -d '{"disk_name": "nvme0n1", "size":"80%"}' \
-      https://192.168.3.248:8443/part_disk
+      https://192.168.3.100:8443/part_disk
 ```
 
 find free disk partition
 ```
 curl -k -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczMzYzNjk5LCJleHAiOjE3NzU5NTU2OTksImp0aSI6IjA0OGM2OWFjLWRkOGYtNGFmZC04YmFmLWNmNTU2MzliZjI0YyJ9.FYk5E-a2MbHQlT-2yUKeqwexmOq8t6J4U0GK2JS2UJY"  \
-      https://192.168.3.248:8443/get_free_parts
+      https://192.168.3.100:8443/get_free_parts
 
 ```
 
 create pool
 
 ```
-  curl -k -X POST https://192.168.3.248:8443/create_pool \
+  curl -k -X POST https://192.168.3.100:8443/create_pool \
    -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczMzYzNjk5LCJleHAiOjE3NzU5NTU2OTksImp0aSI6IjA0OGM2OWFjLWRkOGYtNGFmZC04YmFmLWNmNTU2MzliZjI0YyJ9.FYk5E-a2MbHQlT-2yUKeqwexmOq8t6J4U0GK2JS2UJY"  \
     -H "Content-Type: application/json" \
     -d '{"pool_name":"datapool","pool_type":"raid1","devices":["sda3","sdb3","nvme0n1p1"]}'
@@ -62,7 +62,7 @@ create pool
 
 desttory pool
 ```
-  curl -k -X POST https://192.168.3.248:8443/destroy_pool \
+  curl -k -X POST https://192.168.3.100:8443/destroy_pool \
    -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczMzYzNjk5LCJleHAiOjE3NzU5NTU2OTksImp0aSI6IjA0OGM2OWFjLWRkOGYtNGFmZC04YmFmLWNmNTU2MzliZjI0YyJ9.FYk5E-a2MbHQlT-2yUKeqwexmOq8t6J4U0GK2JS2UJY"  \
   -H "Content-Type: application/json" \
   -d '{"pool_name": "mypool"}'
@@ -85,6 +85,6 @@ add user
 logout
 ```
   curl -k -X POST https://192.168.3.100:8443/logout \
-      -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczMzYzNjk5LCJleHAiOjE3NzU5NTU2OTksImp0aSI6IjA0OGM2OWFjLWRkOGYtNGFmZC04YmFmLWNmNTU2MzliZjI0YyJ9.FYk5E-a2MbHQlT-2yUKeqwexmOq8t6J4U0GK2JS2UJY"
+      -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczNTgzMDM0LCJleHAiOjE3NzYxNzUwMzQsImp0aSI6ImQzZGYyYmYyLTdhNjQtNDMyOS05MWEyLWY4YzcxZDcyOGFiMiJ9.K3f7IzcLqi9aO9WR0bY52riSZOYgaoY7Uvc-kg2eAHI"
 
 ```

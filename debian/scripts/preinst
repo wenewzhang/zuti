@@ -10,5 +10,6 @@ fi
 mkdir -p /etc/zuti/certs
 mkdir -p /var/lib/zuti
 mkdir -p /var/log/zuti
+mkdir -p /.data/zuti
 
 exit 0

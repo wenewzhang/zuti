@@ -29,11 +29,14 @@ set -e
 CERT_DIR="/etc/zuti/certs"
 KEY_FILE="${CERT_DIR}/server.key"
 CERT_FILE="${CERT_DIR}/server.crt"
+ENV_FILE="/etc/zuti/.env"
+DATA_DIR="/.data/zuti"
 
 # 设置权限
-chown -R zuti:zuti /etc/zuti 2>/dev/null || chown -R root:root /etc/zuti
-chown -R zuti:zuti /var/lib/zuti 2>/dev/null || chown -R root:root /var/lib/zuti
-chown -R zuti:zuti /var/log/zuti 2>/dev/null || chown -R root:root /var/log/zuti
+chown -R root:root /etc/zuti 2>/dev/null || chown -R root:root /etc/zuti
+chown -R root:root /var/lib/zuti 2>/dev/null || chown -R root:root /var/lib/zuti
+chown -R root:root /var/log/zuti 2>/dev/null || chown -R root:root /var/log/zuti
+chown -R root:root "${DATA_DIR}" 2>/dev/null || chown -R root:root "${DATA_DIR}"
 
 # 生成 SSL 证书（如果不存在）
 if [ ! -f "${CERT_FILE}" ] || [ ! -f "${KEY_FILE}" ]; then
@@ -45,20 +48,43 @@ if [ ! -f "${CERT_FILE}" ] || [ ! -f "${KEY_FILE}" ]; then
     
     chmod 600 "${KEY_FILE}"
     chmod 644 "${CERT_FILE}"
-    chown zuti:zuti "${KEY_FILE}" "${CERT_FILE}" 2>/dev/null || chown root:root "${KEY_FILE}" "${CERT_FILE}"
+    chown root:root "${KEY_FILE}" "${CERT_FILE}" 2>/dev/null || chown root:root "${KEY_FILE}" "${CERT_FILE}"
     
     echo "SSL certificate generated at ${CERT_DIR}"
 else
     echo "SSL certificates already exist, skipping generation."
 fi
 
-# 配置 .env 文件
-if [ ! -f /etc/zuti/.env ]; then
-    if [ -f /etc/zuti/.env.example ]; then
-        cp /etc/zuti/.env.example /etc/zuti/.env
-        sed -i 's|^CERT_PATH=.*|CERT_PATH=/etc/zuti/certs/server.crt|' /etc/zuti/.env
-        sed -i 's|^KEY_PATH=.*|KEY_PATH=/etc/zuti/certs/server.key|' /etc/zuti/.env
+# 复制数据库文件（如果不存在）
+if [ ! -f "${DATA_DIR}/db.sqlite" ]; then
+    if [ -f "/usr/share/zuti/db/db.sqlite" ]; then
+        cp /usr/share/zuti/db/db.sqlite "${DATA_DIR}/db.sqlite"
+        chown root:root "${DATA_DIR}/db.sqlite" 2>/dev/null || chown root:root "${DATA_DIR}/db.sqlite"
+        chmod 640 "${DATA_DIR}/db.sqlite"
+        echo "Database copied to ${DATA_DIR}/db.sqlite"
     fi
+fi
+
+# 配置 .env 文件
+if [ ! -f "${ENV_FILE}" ]; then
+    cat > "${ENV_FILE}" << 'ENV_EOF'
+# Zuti 配置文件
+# 数据库路径
+DATABASE_URL=sqlite:///.data/zuti/db.sqlite
+
+# 服务器地址
+SERVER_ADDRESS=0.0.0.0:8443
+
+# JWT 密钥（请修改生产环境密钥）
+JWT_SECRET=your_secret_key_change_in_production
+
+# SSL 证书路径
+CERT_FILE=/etc/zuti/certs/server.crt
+KEY_FILE=/etc/zuti/certs/server.key
+ENV_EOF
+    chmod 640 "${ENV_FILE}"
+    chown root:root "${ENV_FILE}" 2>/dev/null || chown root:root "${ENV_FILE}"
+    echo "Environment file created at ${ENV_FILE}"
 fi
 
 # 启动服务
@@ -72,9 +98,9 @@ echo ""
 echo "=========================================="
 echo "zuti installed successfully!"
 echo "=========================================="
-echo "Configuration: /etc/zuti/.env"
+echo "Configuration: ${ENV_FILE}"
 echo "Certificates:  ${CERT_DIR}"
-echo "Data:          /var/lib/zuti"
+echo "Data:          ${DATA_DIR}"
 echo ""
 echo "Service: systemctl {start|stop|status} zuti"
 echo "Logs:    journalctl -u zuti -f"
@@ -90,7 +116,7 @@ set -e
 if ! id -u zuti >/dev/null 2>&1; then
     useradd -r -s /bin/false -M -d /var/lib/zuti zuti 2>/dev/null || true
 fi
-mkdir -p /etc/zuti/certs /var/lib/zuti /var/log/zuti
+mkdir -p /etc/zuti/certs /var/lib/zuti /var/log/zuti /.data/zuti
 exit 0
 PREINST_EOF
 

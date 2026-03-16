@@ -32,6 +32,8 @@ cp "migrations/"* "${BUILD_DIR}/usr/share/zuti/migrations/" 2>/dev/null || true
 cp ".env.example" "${BUILD_DIR}/etc/zuti/" 2>/dev/null || true
 cp "debian/zuti.service" "${BUILD_DIR}/lib/systemd/system/"
 
+mkdir -p db
+diesel database setup --database-url=sqlite://./db/db.sqlite
 # 创建 control 文件
 cat > "${BUILD_DIR}/DEBIAN/control" << EOF
 Package: zuti
@@ -67,9 +69,9 @@ KEY_FILE="${CERT_DIR}/server.key"
 CERT_FILE="${CERT_DIR}/server.crt"
 
 # 设置目录权限
-chown -R zuti:zuti /etc/zuti 2>/dev/null || chown -R root:root /etc/zuti
-chown -R zuti:zuti /var/lib/zuti 2>/dev/null || chown -R root:root /var/lib/zuti
-chown -R zuti:zuti /var/log/zuti 2>/dev/null || chown -R root:root /var/log/zuti
+chown -R root:root /etc/zuti 2>/dev/null || chown -R root:root /etc/zuti
+chown -R root:root /var/lib/zuti 2>/dev/null || chown -R root:root /var/lib/zuti
+chown -R root:root /var/log/zuti 2>/dev/null || chown -R root:root /var/log/zuti
 
 # 生成 SSL 证书（如果不存在）
 if [ ! -f "${CERT_FILE}" ] || [ ! -f "${KEY_FILE}" ]; then
@@ -85,7 +87,7 @@ if [ ! -f "${CERT_FILE}" ] || [ ! -f "${KEY_FILE}" ]; then
     # 设置证书权限
     chmod 600 "${KEY_FILE}"
     chmod 644 "${CERT_FILE}"
-    chown zuti:zuti "${KEY_FILE}" "${CERT_FILE}" 2>/dev/null || chown root:root "${KEY_FILE}" "${CERT_FILE}"
+    chown root:root "${KEY_FILE}" "${CERT_FILE}" 2>/dev/null || chown root:root "${KEY_FILE}" "${CERT_FILE}"
     
     echo "SSL certificate generated at:"
     echo "  Key:  ${KEY_FILE}"
