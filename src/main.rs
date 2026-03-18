@@ -116,12 +116,23 @@ async fn main() -> std::io::Result<()> {
     println!("Try: curl -k https://{}/ping", server_address);
     println!("Database connected: {}", database_url);
 
-    // 7. 检查主配置文件是否包含 conf.d 目录引用
+    // 检查是否存在 smb.conf 备份文件，如果没有则创建
     let smb_conf_path = Path::new("/etc/samba/smb.conf");
+    let smb_conf_bak_path = Path::new("/etc/samba/smb.conf.bak");
+    if !smb_conf_bak_path.exists() {
+        if let Err(e) = std::fs::copy(smb_conf_path, smb_conf_bak_path) {
+            log::warn!("Failed to backup smb.conf: {}", e);
+        } else {
+            log::info!("Created backup: /etc/samba/smb.conf.bak");
+        }
+    }
+
+    // 7. 检查主配置文件是否包含 conf.d 目录引用
     if let Err(e) = crate::utils::ensure_global_include(smb_conf_path, "/etc/samba/conf.d/*.conf") {
         log::warn!("Failed to update smb.conf: {}", e);
-    } else log::info!("Keep smb.conf global add include /etc/samba/conf.d/*.conf");
-
+    } else {
+        log::info!("Keep smb.conf global add include /etc/samba/conf.d/*.conf");
+    }
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(pool.clone()))
