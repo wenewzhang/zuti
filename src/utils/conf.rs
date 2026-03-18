@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use configparser::ini::Ini;
+use ini::Ini;
 
 /// 生成包含 include 配置的新内容（预览模式，不写入文件）
 /// 
@@ -15,33 +15,35 @@ pub fn ensure_global_include_preview(
     content: &str,
     include_path: &str,
 ) -> Result<(String, bool), String> {
-    let mut ini = Ini::new();
-    
     // 解析配置内容
-    ini.read(content.to_string())
-        .map_err(|e| format!("Failed to parse config: {:?}", e))?;
+    let ini = Ini::load_from_str(content)
+        .map_err(|e| format!("Failed to parse config: {}", e))?;
     
     // 检查是否存在 [global] 段
-    if !ini.sections().contains(&"global".to_string()) {
-        return Err("[global] section not found".to_string());
-    }
+    let global_section = ini.section(Some("global"))
+        .ok_or_else(|| "[global] section not found".to_string())?;
     
     // 检查是否已包含该 include
-    if let Some(val) = ini.get("global", "include") {
+    if let Some(val) = global_section.get("include") {
         // 已存在，检查是否包含目标路径
         if val.split_whitespace().any(|p| p == include_path) {
             return Ok((content.to_string(), false)); // 已存在，无需修改
         }
-        // 已存在其他 include，追加新路径
-        let new_include = format!("{} {}", val, include_path);
-        ini.set("global", "include", Some(new_include));
-    } else {
-        // 不存在 include，添加新的
-        ini.set("global", "include", Some(include_path.to_string()));
     }
     
+    // 需要添加 include，使用 with_general_section() 获取可写的 section
+    let mut ini_mut = Ini::load_from_str(content)
+        .map_err(|e| format!("Failed to parse config: {}", e))?;
+    
+    ini_mut.with_section(Some("global"))
+        .set("include", include_path);
+    
     // 写回字符串
-    let new_content = ini.writes();
+    let mut new_content = Vec::new();
+    ini_mut.write_to(&mut new_content)
+        .map_err(|e| format!("Failed to write config: {}", e))?;
+    let new_content = String::from_utf8(new_content)
+        .map_err(|e| format!("Invalid UTF-8: {}", e))?;
     
     Ok((new_content, true))
 }
@@ -106,7 +108,7 @@ path = /path/to/share1
         assert!(result.unwrap()); // 返回 true 表示已修改
 
         let updated = fs::read_to_string(temp_file.path()).unwrap();
-        // configparser 会重新排列 section，但只要包含 include 路径即可
+        // rust-ini 会重新排列 section，但只要包含 include 路径即可
         assert!(updated.contains("/etc/samba/conf.d/*.conf"));
     }
 
@@ -149,7 +151,7 @@ server string = Samba Server
         assert!(result.unwrap());
 
         let updated = fs::read_to_string(temp_file.path()).unwrap();
-        // configparser 会改变格式，但只要包含 include 路径即可
+        // rust-ini 会改变格式，但只要包含 include 路径即可
         assert!(updated.contains("/etc/samba/conf.d/*.conf"));
     }
 
