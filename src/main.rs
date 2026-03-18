@@ -120,7 +120,7 @@ async fn main() -> std::io::Result<()> {
     let smb_conf_path = Path::new("/etc/samba/smb.conf");
     if let Err(e) = crate::utils::ensure_global_include(smb_conf_path, "/etc/samba/conf.d/*.conf") {
         log::warn!("Failed to update smb.conf: {}", e);
-    }
+    } else log::info!("Keep smb.conf global add include /etc/samba/conf.d/*.conf");
 
     HttpServer::new(move || {
         App::new()
