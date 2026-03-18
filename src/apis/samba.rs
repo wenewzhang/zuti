@@ -1,4 +1,5 @@
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
+use ini::Ini;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -98,27 +99,39 @@ pub async fn smb_public_share(
         .and_then(|name| name.to_str())
         .unwrap_or("public");
 
-    // 6. 生成 Samba 配置文件内容
-    let config_content = format!(
-        "[{}]\n    path = {}\n    browseable = {}\n    read only = {}\n    guest ok = {}\n",
-        share_name,
-        share_req.directory,
-        share_req.browseable.to_lowercase(),
-        share_req.read_only.to_lowercase(),
-        share_req.guest_ok.to_lowercase()
-    );
-
-    // 7. 写入 {share_name}.conf 文件
+    // 6. 使用 rust-ini 写入 public.conf 文件
     let conf_file = conf_dir.join("public.conf");
-    match fs::write(&conf_file, config_content) {
-        Ok(_) => {}
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
-                success: false,
-                message: "Failed to write public.conf".to_string(),
-                error: Some(format!("{}", e)),
-            });
+
+    // 加载或创建配置文件
+    let mut ini = if conf_file.exists() {
+        match Ini::load_from_file(&conf_file) {
+            Ok(ini) => ini,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+                    success: false,
+                    message: "Failed to parse public.conf".to_string(),
+                    error: Some(format!("{}", e)),
+                });
+            }
         }
+    } else {
+        Ini::new()
+    };
+
+    // 设置或更新 share section（存在则修改，不存在则创建）
+    ini.with_section(Some(share_name.to_string()))
+        .set("path", &share_req.directory)
+        .set("browseable", &share_req.browseable.to_lowercase())
+        .set("read only", &share_req.read_only.to_lowercase())
+        .set("guest ok", &share_req.guest_ok.to_lowercase());
+
+    // 写入文件
+    if let Err(e) = ini.write_to_file(&conf_file) {
+        return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+            success: false,
+            message: "Failed to write public.conf".to_string(),
+            error: Some(format!("{}", e)),
+        });
     }
 
     // 9. 尝试重新加载 Samba 服务（如果存在）
