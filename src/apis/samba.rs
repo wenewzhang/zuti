@@ -109,7 +109,7 @@ pub async fn smb_public_share(
     );
 
     // 7. 写入 {share_name}.conf 文件
-    let conf_file = conf_dir.join(format!("{}.conf", share_name));
+    let conf_file = conf_dir.join("public.conf");
     match fs::write(&conf_file, config_content) {
         Ok(_) => {}
         Err(e) => {
