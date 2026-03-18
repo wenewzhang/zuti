@@ -114,34 +114,6 @@ pub async fn smb_public_share(
         }
     }
 
-    // 7. 检查主配置文件是否包含 conf.d 目录引用
-    let smb_conf_path = Path::new("/etc/samba/smb.conf");
-    if let Err(e) = crate::utils::ensure_global_include(smb_conf_path, "/etc/samba/conf.d/*.conf") {
-        log::warn!("Failed to update smb.conf: {}", e);
-    }
-
-    // 8. 测试 Samba 配置
-    let test_output = Command::new("testparm")
-        .args(["-s", "/etc/samba/smb.conf"])
-        .output();
-
-    match test_output {
-        Ok(output) => {
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
-                    success: false,
-                    message: "Samba configuration test failed".to_string(),
-                    error: Some(stderr.to_string()),
-                });
-            }
-        }
-        Err(e) => {
-            // testparm 命令不存在或不成功，仅记录警告
-            log::warn!("Failed to run testparm: {}", e);
-        }
-    }
-
     // 9. 尝试重新加载 Samba 服务（如果存在）
     let _ = Command::new("systemctl")
         .args(["restart", "smbd"])
