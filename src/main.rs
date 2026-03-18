@@ -132,6 +132,7 @@ async fn main() -> std::io::Result<()> {
             .service(apis::disks::part_disk)
             .service(apis::disks::create_pool)
             .service(apis::disks::destroy_pool)
+            .service(apis::samba::smb_public_share)
     })
     .bind_openssl(&server_address, builder)?
     .run()

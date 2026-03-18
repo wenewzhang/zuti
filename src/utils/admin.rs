@@ -15,6 +15,32 @@ pub struct ErrorResponse {
     pub error: Option<String>,
 }
 
+/// 检查用户 type_ 是否为 share 或 admin
+///
+/// # Arguments
+/// * `pool` - 数据库连接池
+/// * `username` - 用户名
+///
+/// # Returns
+/// * `Ok(true)` - 用户是 share 或 admin
+/// * `Ok(false)` - 用户不是 share 也不是 admin
+/// * `Err(AdminCheckError::UserNotFound)` - 用户不存在
+/// * `Err(AdminCheckError::DatabaseError)` - 数据库查询错误
+pub fn is_share_or_admin(pool: &crate::DbPool, username: &str) -> Result<bool, AdminCheckError> {
+    let mut conn = pool.get().map_err(|_| AdminCheckError::DatabaseError)?;
+
+    let user_result: Result<Option<User>, _> = users
+        .filter(name.eq(username))
+        .first::<User>(&mut conn)
+        .optional();
+
+    match user_result {
+        Ok(Some(user)) => Ok(user.type_ == "share" || user.type_ == "admin"),
+        Ok(None) => Err(AdminCheckError::UserNotFound),
+        Err(_) => Err(AdminCheckError::DatabaseError),
+    }
+}
+
 /// 检查用户是否为 admin
 ///
 /// # Arguments
@@ -145,6 +171,51 @@ pub async fn verify_admin_access(
     let username = claims.sub;
     
     match is_admin(pool.get_ref(), &username) {
+        Ok(true) => Ok(username),
+        Ok(false) => {
+            Err(HttpResponse::Forbidden()
+                .content_type(ContentType::json())
+                .body(serde_json::to_string(&ErrorResponse {
+                    success: false,
+                    message: "Permission denied".to_string(),
+                    error: Some("Only admin users can perform this operation".to_string()),
+                }).unwrap()))
+        }
+        Err(AdminCheckError::UserNotFound) => {
+            Err(HttpResponse::Unauthorized()
+                .content_type(ContentType::json())
+                .body(serde_json::to_string(&ErrorResponse {
+                    success: false,
+                    message: "User not found".to_string(),
+                    error: Some("User does not exist".to_string()),
+                }).unwrap()))
+        }
+        Err(AdminCheckError::DatabaseError) => {
+            Err(HttpResponse::InternalServerError()
+                .content_type(ContentType::json())
+                .body(serde_json::to_string(&ErrorResponse {
+                    success: false,
+                    message: "Database error".to_string(),
+                    error: Some("Failed to query user information".to_string()),
+                }).unwrap()))
+        }
+    }
+}
+
+pub async fn verify_share_access(
+    req: &HttpRequest,
+    pool: &web::Data<crate::DbPool>,
+) -> Result<String, HttpResponse> {
+    // 1. 验证 JWT token（包括数据库验证）
+    let claims = match validate_token_with_db(req, pool).await {
+        Ok(claims) => claims,
+        Err(response) => return Err(response),
+    };
+
+    // 2. 检查用户是否为 admin
+    let username = claims.sub;
+    
+    match is_share_or_admin(pool.get_ref(), &username) {
         Ok(true) => Ok(username),
         Ok(false) => {
             Err(HttpResponse::Forbidden()
