@@ -102,7 +102,7 @@ smb public share
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
-      "directory": "/one-pool/windows_share",
+      "directory": "/datapool/myshare",
       "browseable": "yes",
       "read_only": "no",
       "guest_ok": "yes"

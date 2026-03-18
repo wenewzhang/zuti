@@ -128,10 +128,10 @@ async fn main() -> std::io::Result<()> {
     }
 
     // 7. 检查主配置文件是否包含 conf.d 目录引用
-    if let Err(e) = crate::utils::ensure_global_include(smb_conf_path, "/etc/samba/conf.d/*.conf") {
+    if let Err(e) = crate::utils::ensure_global_include(smb_conf_path, "/etc/samba/conf.d/public.conf") {
         log::warn!("Failed to update smb.conf: {}", e);
     } else {
-        log::info!("Keep smb.conf global add include /etc/samba/conf.d/*.conf");
+        log::info!("Keep smb.conf global add include /etc/samba/conf.d/public.conf");
     }
     HttpServer::new(move || {
         App::new()

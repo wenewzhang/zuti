@@ -92,17 +92,24 @@ pub async fn smb_public_share(
         }
     }
 
-    // 5. 生成 Samba 配置文件内容
+    // 5. 从目录路径提取共享名（取最后的路径组件）
+    let share_name = dir_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("public");
+
+    // 6. 生成 Samba 配置文件内容
     let config_content = format!(
-        "[public]\n    path = {}\n    browseable = {}\n    read only = {}\n    guest ok = {}\n",
+        "[{}]\n    path = {}\n    browseable = {}\n    read only = {}\n    guest ok = {}\n",
+        share_name,
         share_req.directory,
         share_req.browseable.to_lowercase(),
         share_req.read_only.to_lowercase(),
         share_req.guest_ok.to_lowercase()
     );
 
-    // 6. 写入 public.conf 文件
-    let conf_file = conf_dir.join("public.conf");
+    // 7. 写入 {share_name}.conf 文件
+    let conf_file = conf_dir.join(format!("{}.conf", share_name));
     match fs::write(&conf_file, config_content) {
         Ok(_) => {}
         Err(e) => {
