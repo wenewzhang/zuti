@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use crate::utils::consts::FORBID_DIRECTORY;
 
 // Samba public share 请求结构体
 #[derive(Deserialize)]
@@ -23,7 +24,7 @@ pub struct SmbPublicShareResponse {
 }
 
 // smb_public_share API - 创建公共 Samba 共享配置（需要 JWT 认证）
-#[post("/smb_public_share")]
+#[post("/smb/public_share")]
 pub async fn smb_public_share(
     req: HttpRequest,
     share_req: web::Json<SmbPublicShareRequest>,
@@ -62,7 +63,19 @@ pub async fn smb_public_share(
         });
     }
 
-    // 3. 检查目录是否存在
+    // 3. 检查是否为禁止的目录
+    let directory = &share_req.directory;
+    for forbid_dir in FORBID_DIRECTORY {
+        if directory == *forbid_dir || directory.starts_with(&format!("{}/", forbid_dir)) || directory == "/" {
+            return HttpResponse::BadRequest().json(SmbPublicShareResponse {
+                success: false,
+                message: format!("Forbidden directory: {}", directory),
+                error: Some(format!("Directory '{}' is not allowed for sharing", forbid_dir)),
+            });
+        }
+    }
+
+    // 4. 检查目录是否存在
     let dir_path = Path::new(&share_req.directory);
     if !dir_path.exists() {
         // 尝试创建目录
@@ -78,7 +91,7 @@ pub async fn smb_public_share(
         }
     }
 
-    // 4. 创建 /etc/samba/conf.d 目录
+    // 5. 创建 /etc/samba/conf.d 目录
     let conf_dir = Path::new("/etc/samba/conf.d");
     if !conf_dir.exists() {
         match fs::create_dir_all(conf_dir) {
@@ -93,13 +106,13 @@ pub async fn smb_public_share(
         }
     }
 
-    // 5. 从目录路径提取共享名（取最后的路径组件）
+    // 6. 从目录路径提取共享名（取最后的路径组件）
     let share_name = dir_path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("public");
 
-    // 6. 使用 rust-ini 写入 public.conf 文件
+    // 7. 使用 rust-ini 写入 public.conf 文件
     let conf_file = conf_dir.join("public.conf");
 
     // 加载或创建配置文件
@@ -134,7 +147,7 @@ pub async fn smb_public_share(
         });
     }
 
-    // 9. 尝试重新加载 Samba 服务（如果存在）
+    // 8. 尝试重新加载 Samba 服务（如果存在）
     let _ = Command::new("systemctl")
         .args(["restart", "smbd"])
         .output();
