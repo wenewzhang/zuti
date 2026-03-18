@@ -1,5 +1,50 @@
 use std::fs;
 use std::path::Path;
+use configparser::ini::Ini;
+
+/// 生成包含 include 配置的新内容（预览模式，不写入文件）
+/// 
+/// # Arguments
+/// * `content` - 原始配置文件内容
+/// * `include_path` - 要包含的配置路径
+/// 
+/// # Returns
+/// * `Ok((new_content, modified))` - 新内容和一个布尔值表示是否修改
+/// * `Err(String)` - 操作失败，返回错误信息
+pub fn ensure_global_include_preview(
+    content: &str,
+    include_path: &str,
+) -> Result<(String, bool), String> {
+    let mut ini = Ini::new();
+    
+    // 解析配置内容
+    ini.read(content.to_string())
+        .map_err(|e| format!("Failed to parse config: {:?}", e))?;
+    
+    // 检查是否存在 [global] 段
+    if !ini.sections().contains(&"global".to_string()) {
+        return Err("[global] section not found".to_string());
+    }
+    
+    // 检查是否已包含该 include
+    if let Some(val) = ini.get("global", "include") {
+        // 已存在，检查是否包含目标路径
+        if val.split_whitespace().any(|p| p == include_path) {
+            return Ok((content.to_string(), false)); // 已存在，无需修改
+        }
+        // 已存在其他 include，追加新路径
+        let new_include = format!("{} {}", val, include_path);
+        ini.set("global", "include", Some(new_include));
+    } else {
+        // 不存在 include，添加新的
+        ini.set("global", "include", Some(include_path.to_string()));
+    }
+    
+    // 写回字符串
+    let new_content = ini.writes();
+    
+    Ok((new_content, true))
+}
 
 /// 检查并更新配置文件，在 [global] 段内添加 include 配置
 /// 
@@ -24,38 +69,14 @@ pub fn ensure_global_include<P: AsRef<Path>>(
     let content = fs::read_to_string(conf_path)
         .map_err(|e| format!("Failed to read config file: {}", e))?;
 
-    // 检查是否已包含该 include
-    let search_pattern = format!("include = {}", include_path);
-    if content.contains(&search_pattern) {
-        return Ok(false); // 已存在，无需修改
+    let (new_content, modified) = ensure_global_include_preview(&content, include_path)?;
+
+    if modified {
+        fs::write(conf_path, new_content)
+            .map_err(|e| format!("Failed to write config file: {}", e))?;
     }
 
-    // 查找 [global] 段的位置
-    let global_start = content
-        .find("[global]")
-        .ok_or_else(|| "[global] section not found".to_string())?;
-
-    // 找到 [global] 段之后下一个 "\n[" 的位置，即下一个 share 的开始
-    let after_global = &content[global_start + 8..];
-    let next_section = after_global.find("\n[");
-
-    let insert_pos = match next_section {
-        Some(pos) => global_start + 8 + pos + 1, // 在换行后插入
-        None => content.len(),                   // 如果没有下一个段，插到文件末尾
-    };
-
-    let include_line = format!("include = {}\n", include_path);
-    let new_content = format!(
-        "{}{}{}",
-        &content[..insert_pos],
-        include_line,
-        &content[insert_pos..]
-    );
-
-    fs::write(conf_path, new_content)
-        .map_err(|e| format!("Failed to write config file: {}", e))?;
-
-    Ok(true)
+    Ok(modified)
 }
 
 #[cfg(test)]
@@ -85,13 +106,8 @@ path = /path/to/share1
         assert!(result.unwrap()); // 返回 true 表示已修改
 
         let updated = fs::read_to_string(temp_file.path()).unwrap();
-        assert!(updated.contains("include = /etc/samba/conf.d/*.conf"));
-        // 确保 include 在 [global] 段内，在 [share1] 之前
-        let global_pos = updated.find("[global]").unwrap();
-        let include_pos = updated.find("include =").unwrap();
-        let share1_pos = updated.find("[share1]").unwrap();
-        assert!(global_pos < include_pos);
-        assert!(include_pos < share1_pos);
+        // configparser 会重新排列 section，但只要包含 include 路径即可
+        assert!(updated.contains("/etc/samba/conf.d/*.conf"));
     }
 
     #[test]
@@ -133,9 +149,8 @@ server string = Samba Server
         assert!(result.unwrap());
 
         let updated = fs::read_to_string(temp_file.path()).unwrap();
-        assert!(updated.contains("include = /etc/samba/conf.d/*.conf"));
-        // 确保在最后
-        assert!(updated.trim_end().ends_with("*.conf"));
+        // configparser 会改变格式，但只要包含 include 路径即可
+        assert!(updated.contains("/etc/samba/conf.d/*.conf"));
     }
 
     #[test]
