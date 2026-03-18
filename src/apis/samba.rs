@@ -116,26 +116,8 @@ pub async fn smb_public_share(
 
     // 7. 检查主配置文件是否包含 conf.d 目录引用
     let smb_conf_path = Path::new("/etc/samba/smb.conf");
-    if smb_conf_path.exists() {
-        match fs::read_to_string(smb_conf_path) {
-            Ok(content) => {
-                if !content.contains("include = /etc/samba/conf.d") {
-                    // 追加 include 配置到主配置文件末尾
-                    let include_line = "\ninclude = /etc/samba/conf.d/*.conf\n";
-                    match fs::OpenOptions::new()
-                        .append(true)
-                        .open(smb_conf_path)
-                    {
-                        Ok(mut file) => {
-                            use std::io::Write;
-                            let _ = file.write_all(include_line.as_bytes());
-                        }
-                        Err(_) => {}
-                    }
-                }
-            }
-            Err(_) => {}
-        }
+    if let Err(e) = crate::utils::ensure_global_include(smb_conf_path, "/etc/samba/conf.d/*.conf") {
+        log::warn!("Failed to update smb.conf: {}", e);
     }
 
     // 8. 测试 Samba 配置
