@@ -102,10 +102,25 @@ smb public share
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
-      "directory": "/one-pool",
+      "directory": "/etcc",
       "browseable": "yes",
       "read_only": "no",
       "guest_ok": "yes"
+    }'
+
+```
+
+smb auth share
+```
+  curl -X POST https://localhost:8443/smb/auth_share \
+    -H "Authorization: Bearer <JWT_TOKEN>" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "directory": "/data/shared_folder",
+      "browseable": "yes",
+      "read_only": "no",
+      "valid_users": ["user1", "user2", "user3"],
+      "write_list": ["user1", "user2"]
     }'
 
 ```

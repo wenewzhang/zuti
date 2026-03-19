@@ -6,7 +6,7 @@ use serde::Serialize;
 use dotenvy::{dotenv, from_path};
 use std::env;
 use std::path::Path;
-
+use std::fs;
 
 mod apis;
 mod config;
@@ -127,11 +127,28 @@ async fn main() -> std::io::Result<()> {
         }
     }
 
+        // 6. 创建 /etc/samba/conf.d 目录
+    let conf_dir = Path::new("/etc/samba/conf.d");
+    if !conf_dir.exists() {
+        match fs::create_dir_all(conf_dir) {
+            Ok(_) => {}
+            Err(e) => {
+               log::info!("Failed to create /etc/samba/conf.d directory")               
+            }
+        }
+    }
     // 7. 检查主配置文件是否包含 conf.d 目录引用
     if let Err(e) = crate::utils::ensure_global_include(smb_conf_path, "/etc/samba/conf.d/public.conf") {
         log::warn!("Failed to update smb.conf: {}", e);
     } else {
         log::info!("Keep smb.conf global add include /etc/samba/conf.d/public.conf");
+    }
+
+    // 7. 检查主配置文件是否包含 conf.d 目录引用
+    if let Err(e) = crate::utils::ensure_global_include(smb_conf_path, "/etc/samba/conf.d/private.conf") {
+        log::warn!("Failed to update smb.conf: {}", e);
+    } else {
+        log::info!("Keep smb.conf global add include /etc/samba/conf.d/private.conf");
     }
     HttpServer::new(move || {
         App::new()
@@ -150,6 +167,7 @@ async fn main() -> std::io::Result<()> {
             .service(apis::disks::create_pool)
             .service(apis::disks::destroy_pool)
             .service(apis::samba::smb_public_share)
+            .service(apis::samba::smb_auth_share)
     })
     .bind_openssl(&server_address, builder)?
     .run()
