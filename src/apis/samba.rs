@@ -6,8 +6,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 use crate::models::User;
-use crate::schema::users::dsl::*;
-use crate::utils::consts::{FORBID_DIRECTORY, USER_TYPE_SHARE};
+use crate::schema::users as users_schema;
+use crate::utils::consts::FORBID_DIRECTORY;
 
 // Samba public share 请求结构体
 #[derive(Deserialize)]
@@ -170,7 +170,7 @@ pub async fn smb_public_share(
     // 6. 从目录路径提取共享名（取最后的路径组件）
     let share_name = dir_path
         .file_name()
-        .and_then(|name| name.to_str())
+        .and_then(|n| n.to_str())
         .unwrap_or("public");
 
     // 7. 使用 rust-ini 写入 public.conf 文件
@@ -310,7 +310,7 @@ pub async fn smb_auth_share(
     // 7. 从目录路径提取共享名（取最后的路径组件）
     let share_name = dir_path
         .file_name()
-        .and_then(|name| name.to_str())
+        .and_then(|n| n.to_str())
         .unwrap_or("private");
 
     // 8. 使用 rust-ini 写入 private.conf 文件
@@ -392,7 +392,7 @@ pub async fn smb_add_user(
     };
 
     let username = &user_req.username;
-    let password = &user_req.password;
+    let user_password = &user_req.password;
 
     // 2. 验证用户名合法性（只允许字母数字、下划线）
     if !username.chars().all(|c| c.is_alphanumeric() || c == '_') {
@@ -404,7 +404,7 @@ pub async fn smb_add_user(
     }
 
     // 3. 验证密码长度
-    if password.len() < 4 {
+    if user_password.len() < 4 {
         return HttpResponse::BadRequest().json(SmbAddUserResponse {
             success: false,
             message: "Password too short".to_string(),
@@ -451,7 +451,7 @@ pub async fn smb_add_user(
 
     // 5. 添加到 Samba 用户（smbpasswd -a）
     // 使用 echo 呼结合 smbpasswd -a -s 来非交互式添加用户
-    let smbpasswd_input = format!("{}\n{}\n", password, password);
+    let smbpasswd_input = format!("{}\n{}\n", user_password, user_password);
     let output = Command::new("smbpasswd")
         .args(["-a", "-s", username])
         .stdin(std::process::Stdio::piped())
@@ -535,8 +535,8 @@ pub async fn smb_delete_user(
     let pool_clone = pool.get_ref().clone();
     let db_check_result: Result<Option<User>, String> = web::block(move || {
         let mut conn = pool_clone.get().map_err(|e| format!("Database connection error: {}", e))?;
-        let user_result: Option<User> = users
-            .filter(name.eq(&username_clone))
+        let user_result: Option<User> = users_schema::table
+            .filter(users_schema::name.eq(&username_clone))
             .first::<User>(&mut conn)
             .optional()
             .map_err(|e| format!("Database query error: {}", e))?;
@@ -546,12 +546,12 @@ pub async fn smb_delete_user(
     .unwrap();
 
     match db_check_result {
-        Ok(Some(user)) => {
-                return HttpResponse::Forbidden().json(SmbDeleteUserResponse {
-                    success: false,
-                    message: format!("Cannot delete user '{}' with type 'share' from database", username),
-                    error: Some("Share users cannot be deleted".to_string()),
-                });            
+        Ok(Some(_user)) => {
+            return HttpResponse::Forbidden().json(SmbDeleteUserResponse {
+                success: false,
+                message: format!("Cannot delete user '{}' from database", username),
+                error: Some("Users in database cannot be deleted via this API".to_string()),
+            });
         }
         Ok(None) => {
             // 数据库中不存在，继续检查 Samba 用户列表
@@ -670,7 +670,7 @@ pub async fn smb_list_users(
         .args(["-L"])
         .output();
 
-    let users = match output {
+    let user_list = match output {
         Ok(result) => {
             if !result.status.success() {
                 let stderr = String::from_utf8_lossy(&result.stderr);
@@ -716,7 +716,7 @@ pub async fn smb_list_users(
 
     HttpResponse::Ok().json(SmbListUsersResponse {
         success: true,
-        users,
+        users: user_list,
         message: "Samba users listed successfully".to_string(),
         error: None,
     })
