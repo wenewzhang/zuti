@@ -12,6 +12,7 @@ use crate::schema::users::dsl::*;
 use crate::utils;
 use crate::DbPool;
 use crate::utils::admin::validate_token_with_db;
+use crate::utils::consts::FORBIDDEN_USERNAME;
 
 // 登录请求结构体
 #[derive(Deserialize)]
@@ -39,6 +40,15 @@ pub struct CreateUserResponse {
 // 创建用户
 #[post("/admin_user")]
 pub async fn create_admin_user(pool: web::Data<DbPool>, new_user: web::Json<NewUser>) -> impl Responder {
+    // 检查是否使用了禁止的用户名
+    if new_user.name == FORBIDDEN_USERNAME {
+        return HttpResponse::Forbidden().json(CreateUserResponse {
+            message: format!("Username '{}' is not allowed", FORBIDDEN_USERNAME),
+            system_user_created: false,
+            error: Some("Cannot use forbidden username".to_string()),
+        });
+    }
+
     let pool = pool.get_ref().clone();
     let user_data = new_user.into_inner();
     

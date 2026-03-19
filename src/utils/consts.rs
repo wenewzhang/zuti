@@ -41,6 +41,9 @@ pub const FORBID_DIRECTORY: &[&str] = &[
 /// JWT Token 过期天数
 pub const JWT_TOKEN_EXPIRE_DAYS: i64 = 30;
 
+/// 禁止使用的用户名
+pub const FORBIDDEN_USERNAME: &str = "root";
+
 /// 用户类型 - 只读
 pub const USER_TYPE_READ: &str = "read";
 /// 用户类型 - 共享

@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::Command;
 use crate::models::User;
 use crate::schema::users as users_schema;
-use crate::utils::consts::FORBID_DIRECTORY;
+use crate::utils::consts::{FORBID_DIRECTORY, FORBIDDEN_USERNAME};
 
 // Samba public share 请求结构体
 #[derive(Deserialize)]
@@ -403,7 +403,16 @@ pub async fn smb_add_user(
         });
     }
 
-    // 3. 验证密码长度
+    // 3. 禁止使用 root 作为用户名
+    if username == FORBIDDEN_USERNAME {
+        return HttpResponse::Forbidden().json(SmbAddUserResponse {
+            success: false,
+            message: "Username 'root' is not allowed".to_string(),
+            error: Some("Cannot add root user".to_string()),
+        });
+    }
+
+    // 4. 验证密码长度
     if user_password.len() < 4 {
         return HttpResponse::BadRequest().json(SmbAddUserResponse {
             success: false,
@@ -412,7 +421,7 @@ pub async fn smb_add_user(
         });
     }
 
-    // 4. 检查系统用户是否存在，不存在则创建
+    // 5. 检查系统用户是否存在，不存在则创建
     let output = Command::new("id")
         .arg(username)
         .output();
@@ -449,7 +458,7 @@ pub async fn smb_add_user(
         }
     }
 
-    // 5. 添加到 Samba 用户（smbpasswd -a）
+    // 6. 添加到 Samba 用户（smbpasswd -a）
     // 使用 echo 呼结合 smbpasswd -a -s 来非交互式添加用户
     let smbpasswd_input = format!("{}\n{}\n", user_password, user_password);
     let output = Command::new("smbpasswd")
