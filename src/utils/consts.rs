@@ -37,3 +37,13 @@ pub const FORBID_DIRECTORY: &[&str] = &[
     "/usr",
     "/var",
 ];
+
+/// JWT Token 过期天数
+pub const JWT_TOKEN_EXPIRE_DAYS: i64 = 30;
+
+/// 用户类型 - 只读
+pub const USER_TYPE_READ: &str = "read";
+/// 用户类型 - 共享
+pub const USER_TYPE_SHARE: &str = "share";
+/// 用户类型 - 管理员
+pub const USER_TYPE_ADMIN: &str = "admin";

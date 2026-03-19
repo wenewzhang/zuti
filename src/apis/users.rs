@@ -162,7 +162,7 @@ pub fn create_system_user(username: &str, user_password: &str) -> Result<(), Str
 pub struct AddUserRequest {
     pub username: String,
     pub password: String,
-    pub user_type: String, // "read" 或 "share"
+    pub user_type: String, // USER_TYPE_READ 或 USER_TYPE_SHARE
 }
 
 // 新增用户响应结构体
@@ -193,8 +193,8 @@ pub async fn add_user(
     let user_password = &user_req.password;
     let user_type = &user_req.user_type;
 
-    // 2. 验证用户类型只能是 read 或 share
-    if user_type != "read" && user_type != "share" {
+    // 2. 验证用户类型只能是 USER_TYPE_READ 或 USER_TYPE_SHARE
+    if user_type != crate::utils::consts::USER_TYPE_READ && user_type != crate::utils::consts::USER_TYPE_SHARE {
         return HttpResponse::BadRequest().json(AddUserResponse {
             success: false,
             message: "Invalid user type".to_string(),
@@ -378,7 +378,7 @@ pub async fn login(pool: web::Data<DbPool>, login_req: web::Json<LoginRequest>) 
                     let new_token = jwt::generate_token(
                         user.name.clone(),
                         now.timestamp(),
-                        (now + Duration::days(30)).timestamp(),
+                        (now + Duration::days(crate::utils::consts::JWT_TOKEN_EXPIRE_DAYS)).timestamp(),
                         token_id.clone(),
                     )?;
                     

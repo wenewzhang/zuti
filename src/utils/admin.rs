@@ -35,7 +35,7 @@ pub fn is_share_or_admin(pool: &crate::DbPool, username: &str) -> Result<bool, A
         .optional();
 
     match user_result {
-        Ok(Some(user)) => Ok(user.type_ == "share" || user.type_ == "admin"),
+        Ok(Some(user)) => Ok(user.type_ == crate::utils::consts::USER_TYPE_SHARE || user.type_ == crate::utils::consts::USER_TYPE_ADMIN),
         Ok(None) => Err(AdminCheckError::UserNotFound),
         Err(_) => Err(AdminCheckError::DatabaseError),
     }
@@ -61,7 +61,7 @@ pub fn is_admin(pool: &crate::DbPool, username: &str) -> Result<bool, AdminCheck
         .optional();
 
     match user_result {
-        Ok(Some(user)) => Ok(user.type_ == "admin"),
+        Ok(Some(user)) => Ok(user.type_ == crate::utils::consts::USER_TYPE_ADMIN),
         Ok(None) => Err(AdminCheckError::UserNotFound),
         Err(_) => Err(AdminCheckError::DatabaseError),
     }
