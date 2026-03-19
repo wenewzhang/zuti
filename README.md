@@ -112,8 +112,8 @@ smb public share
 
 smb auth share
 ```
-  curl -X POST https://localhost:8443/smb/auth_share \
-    -H "Authorization: Bearer <JWT_TOKEN>" \
+  curl  -k -X POST https://192.168.3.248:8443/smb/auth_share \
+    -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
       "directory": "/data/shared_folder",
@@ -127,8 +127,8 @@ smb auth share
 
 samba user
 ```
-  curl -X POST https://localhost:8443/smb/add_user \
-    -H "Authorization: Bearer <JWT_TOKEN>" \
+  curl  -k -X POST https://192.168.3.248:8443/smb/add_user \
+    -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
       "username": "shareuser1",
@@ -138,8 +138,8 @@ samba user
 
 delete samba user
 ```
- curl -X POST https://localhost:8443/smb/delete_user \
-    -H "Authorization: Bearer <JWT_TOKEN>" \
+ curl  -k -X POST https://192.168.3.248:8443/smb/delete_user \
+    -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
       "username": "shareuser1"
@@ -149,6 +149,6 @@ delete samba user
 
 list user
 ```
-  curl -X POST https://localhost:8443/smb/list_users \
-    -H "Authorization: Bearer <JWT_TOKEN>"
+  curl  -k -X POST https://192.168.3.248:8443/smb/list_users \
+    -H "Authorization: Bearer $TOKEN"
 ```

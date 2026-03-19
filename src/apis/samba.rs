@@ -375,7 +375,7 @@ pub async fn smb_auth_share(
 }
 
 // smb_add_user API - 添加 Samba 用户（需要 JWT 认证）
-// 注意：Linux 系统用户必须已存在，此 API 只负责将其添加为 Samba 用户
+// 如果 Linux 系统用户不存在，会自动创建
 #[post("/smb/add_user")]
 pub async fn smb_add_user(
     req: HttpRequest,
@@ -407,6 +407,43 @@ pub async fn smb_add_user(
             message: "Password too short".to_string(),
             error: Some("Password must be at least 4 characters".to_string()),
         });
+    }
+
+    // 4. 检查系统用户是否存在，不存在则创建
+    let output = Command::new("id")
+        .arg(username)
+        .output();
+
+    let user_exists = match output {
+        Ok(result) => result.status.success(),
+        Err(_) => false,
+    };
+
+    if !user_exists {
+        // 创建系统用户（无登录权限）
+        let output = Command::new("useradd")
+            .args(["-M", "-s", "/usr/sbin/nologin", username])
+            .output();
+
+        match output {
+            Ok(result) => {
+                if !result.status.success() {
+                    let stderr = String::from_utf8_lossy(&result.stderr);
+                    return HttpResponse::InternalServerError().json(SmbAddUserResponse {
+                        success: false,
+                        message: "Failed to create system user".to_string(),
+                        error: Some(format!("{}", stderr)),
+                    });
+                }
+            }
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(SmbAddUserResponse {
+                    success: false,
+                    message: "Failed to create system user".to_string(),
+                    error: Some(format!("{}", e)),
+                });
+            }
+        }
     }
 
     // 5. 添加到 Samba 用户（smbpasswd -a）
