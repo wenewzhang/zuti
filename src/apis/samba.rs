@@ -91,6 +91,20 @@ pub async fn smb_public_share(
         }
     }
 
+    // Set directory permissions: remove write for others if read_only is yes, otherwise add
+    let chmod_arg = if share_req.read_only.to_lowercase() == "yes" {
+        "o-w"
+    } else {
+        "o+w"
+    };
+    if let Err(e) = Command::new("chmod").arg(chmod_arg).arg(&share_req.directory).output() {
+        return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+            success: false,
+            message: format!("Failed to set directory permissions: {}", share_req.directory),
+            error: Some(format!("{}", e)),
+        });
+    }
+
     // 5. 创建 /etc/samba/conf.d 目录
     let conf_dir = Path::new("/etc/samba/conf.d");
     if !conf_dir.exists() {

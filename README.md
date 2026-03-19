@@ -98,11 +98,11 @@ smb public share
 ```
 
 
-  curl -k -X POST https://192.168.3.248:8443/smb_public_share \
+  curl -k -X POST https://192.168.3.248:8443/smb/public_share \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
-      "directory": "/datapool/myshare",
+      "directory": "/one-pool",
       "browseable": "yes",
       "read_only": "no",
       "guest_ok": "yes"
