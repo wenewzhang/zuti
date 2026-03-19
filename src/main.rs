@@ -168,6 +168,9 @@ async fn main() -> std::io::Result<()> {
             .service(apis::disks::destroy_pool)
             .service(apis::samba::smb_public_share)
             .service(apis::samba::smb_auth_share)
+            .service(apis::samba::smb_add_user)
+            .service(apis::samba::smb_delete_user)
+            .service(apis::samba::smb_list_users)
     })
     .bind_openssl(&server_address, builder)?
     .run()

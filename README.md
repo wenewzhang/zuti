@@ -124,3 +124,31 @@ smb auth share
     }'
 
 ```
+
+samba user
+```
+  curl -X POST https://localhost:8443/smb/add_user \
+    -H "Authorization: Bearer <JWT_TOKEN>" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "username": "shareuser1",
+      "password": "password123"
+    }'
+```
+
+delete samba user
+```
+ curl -X POST https://localhost:8443/smb/delete_user \
+    -H "Authorization: Bearer <JWT_TOKEN>" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "username": "shareuser1"
+    }'
+
+```
+
+list user
+```
+  curl -X POST https://localhost:8443/smb/list_users \
+    -H "Authorization: Bearer <JWT_TOKEN>"
+```

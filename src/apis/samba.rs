@@ -33,6 +33,52 @@ pub struct SmbAuthShareRequest {
     pub write_list: Vec<String>,  // 有写权限的用户列表
 }
 
+// Samba add user 请求结构体
+#[derive(Deserialize)]
+pub struct SmbAddUserRequest {
+    pub username: String,    // 用户名
+    pub password: String,    // 密码
+}
+
+// Samba add user 响应结构体
+#[derive(Serialize)]
+pub struct SmbAddUserResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+// Samba delete user 请求结构体
+#[derive(Deserialize)]
+pub struct SmbDeleteUserRequest {
+    pub username: String,    // 用户名
+}
+
+// Samba delete user 响应结构体
+#[derive(Serialize)]
+pub struct SmbDeleteUserResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+// Samba user 信息
+#[derive(Serialize)]
+pub struct SmbUserInfo {
+    pub username: String,
+    pub uid: String,
+    pub description: String,
+}
+
+// Samba list users 响应结构体
+#[derive(Serialize)]
+pub struct SmbListUsersResponse {
+    pub success: bool,
+    pub users: Vec<SmbUserInfo>,
+    pub message: String,
+    pub error: Option<String>,
+}
+
 // smb_public_share API - 创建公共 Samba 共享配置（需要 JWT 认证）
 #[post("/smb/public_share")]
 pub async fn smb_public_share(
@@ -324,6 +370,223 @@ pub async fn smb_auth_share(
             "Samba auth share configured successfully. Config saved to {}",
             conf_file.display()
         ),
+        error: None,
+    })
+}
+
+// smb_add_user API - 添加 Samba 用户（需要 JWT 认证）
+// 注意：Linux 系统用户必须已存在，此 API 只负责将其添加为 Samba 用户
+#[post("/smb/add_user")]
+pub async fn smb_add_user(
+    req: HttpRequest,
+    user_req: web::Json<SmbAddUserRequest>,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _username = match crate::utils::verify_share_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let username = &user_req.username;
+    let password = &user_req.password;
+
+    // 2. 验证用户名合法性（只允许字母数字、下划线）
+    if !username.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return HttpResponse::BadRequest().json(SmbAddUserResponse {
+            success: false,
+            message: "Invalid username format".to_string(),
+            error: Some("Username must contain only alphanumeric characters or underscores".to_string()),
+        });
+    }
+
+    // 3. 验证密码长度
+    if password.len() < 4 {
+        return HttpResponse::BadRequest().json(SmbAddUserResponse {
+            success: false,
+            message: "Password too short".to_string(),
+            error: Some("Password must be at least 4 characters".to_string()),
+        });
+    }
+
+    // 5. 添加到 Samba 用户（smbpasswd -a）
+    // 使用 echo 呼结合 smbpasswd -a -s 来非交互式添加用户
+    let smbpasswd_input = format!("{}\n{}\n", password, password);
+    let output = Command::new("smbpasswd")
+        .args(["-a", "-s", username])
+        .stdin(std::process::Stdio::piped())
+        .spawn();
+
+    match output {
+        Ok(mut child) => {
+            use std::io::Write;
+            if let Some(stdin) = child.stdin.as_mut() {
+                if let Err(e) = stdin.write_all(smbpasswd_input.as_bytes()) {
+                    return HttpResponse::InternalServerError().json(SmbAddUserResponse {
+                        success: false,
+                        message: "Failed to add samba user".to_string(),
+                        error: Some(format!("{}", e)),
+                    });
+                }
+            }
+            let result = child.wait_with_output();
+            match result {
+                Ok(output) => {
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        return HttpResponse::InternalServerError().json(SmbAddUserResponse {
+                            success: false,
+                            message: "Failed to add samba user".to_string(),
+                            error: Some(format!("{}", stderr)),
+                        });
+                    }
+                }
+                Err(e) => {
+                    return HttpResponse::InternalServerError().json(SmbAddUserResponse {
+                        success: false,
+                        message: "Failed to add samba user".to_string(),
+                        error: Some(format!("{}", e)),
+                    });
+                }
+            }
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SmbAddUserResponse {
+                success: false,
+                message: "Failed to add samba user".to_string(),
+                error: Some(format!("{}", e)),
+            });
+        }
+    }
+
+    HttpResponse::Ok().json(SmbAddUserResponse {
+        success: true,
+        message: format!("Samba user '{}' created/updated successfully", username),
+        error: None,
+    })
+}
+
+// smb_delete_user API - 删除 Samba 用户（需要 JWT 认证）
+#[post("/smb/delete_user")]
+pub async fn smb_delete_user(
+    req: HttpRequest,
+    user_req: web::Json<SmbDeleteUserRequest>,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _username = match crate::utils::verify_share_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let username = &user_req.username;
+
+    // 2. 验证用户名合法性（只允许字母数字、下划线）
+    if !username.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return HttpResponse::BadRequest().json(SmbDeleteUserResponse {
+            success: false,
+            message: "Invalid username format".to_string(),
+            error: Some("Username must contain only alphanumeric characters or underscores".to_string()),
+        });
+    }
+
+    // 3. 删除 Samba 用户（smbpasswd -x）
+    let output = Command::new("smbpasswd")
+        .args(["-x", username])
+        .output();
+
+    match output {
+        Ok(result) => {
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                return HttpResponse::InternalServerError().json(SmbDeleteUserResponse {
+                    success: false,
+                    message: "Failed to delete samba user".to_string(),
+                    error: Some(format!("{}", stderr)),
+                });
+            }
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SmbDeleteUserResponse {
+                success: false,
+                message: "Failed to delete samba user".to_string(),
+                error: Some(format!("{}", e)),
+            });
+        }
+    }
+
+    HttpResponse::Ok().json(SmbDeleteUserResponse {
+        success: true,
+        message: format!("Samba user '{}' deleted successfully", username),
+        error: None,
+    })
+}
+
+// smb_list_users API - 列出所有 Samba 用户（需要 JWT 认证）
+#[post("/smb/list_users")]
+pub async fn smb_list_users(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _username = match crate::utils::verify_share_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    // 2. 获取 Samba 用户列表（pdbedit -L）
+    let output = Command::new("pdbedit")
+        .args(["-L"])
+        .output();
+
+    let users = match output {
+        Ok(result) => {
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                return HttpResponse::InternalServerError().json(SmbListUsersResponse {
+                    success: false,
+                    users: vec![],
+                    message: "Failed to list samba users".to_string(),
+                    error: Some(format!("{}", stderr)),
+                });
+            }
+            
+            // 解析 pdbedit 输出
+            // 格式: username:uid:description
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            let mut user_list = Vec::new();
+            
+            for line in stdout.lines() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                
+                let parts: Vec<&str> = line.split(':').collect();
+                if parts.len() >= 2 {
+                    user_list.push(SmbUserInfo {
+                        username: parts[0].to_string(),
+                        uid: parts[1].to_string(),
+                        description: parts.get(2).unwrap_or(&"").to_string(),
+                    });
+                }
+            }
+            
+            user_list
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SmbListUsersResponse {
+                success: false,
+                users: vec![],
+                message: "Failed to list samba users".to_string(),
+                error: Some(format!("{}", e)),
+            });
+        }
+    };
+
+    HttpResponse::Ok().json(SmbListUsersResponse {
+        success: true,
+        users,
+        message: "Samba users listed successfully".to_string(),
         error: None,
     })
 }
