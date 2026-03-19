@@ -1,10 +1,13 @@
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
+use diesel::prelude::*;
 use ini::Ini;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use crate::utils::consts::FORBID_DIRECTORY;
+use crate::models::User;
+use crate::schema::users::dsl::*;
+use crate::utils::consts::{FORBID_DIRECTORY, USER_TYPE_SHARE};
 
 // Samba public share 请求结构体
 #[derive(Deserialize)]
@@ -527,7 +530,70 @@ pub async fn smb_delete_user(
         });
     }
 
-    // 3. 删除 Samba 用户（smbpasswd -x）
+    // 3. 检查数据库中是否存在该用户
+    let username_clone = username.clone();
+    let pool_clone = pool.get_ref().clone();
+    let db_check_result: Result<Option<User>, String> = web::block(move || {
+        let mut conn = pool_clone.get().map_err(|e| format!("Database connection error: {}", e))?;
+        let user_result: Option<User> = users
+            .filter(name.eq(&username_clone))
+            .first::<User>(&mut conn)
+            .optional()
+            .map_err(|e| format!("Database query error: {}", e))?;
+        Ok(user_result)
+    })
+    .await
+    .unwrap();
+
+    match db_check_result {
+        Ok(Some(user)) => {
+                return HttpResponse::Forbidden().json(SmbDeleteUserResponse {
+                    success: false,
+                    message: format!("Cannot delete user '{}' with type 'share' from database", username),
+                    error: Some("Share users cannot be deleted".to_string()),
+                });            
+        }
+        Ok(None) => {
+            // 数据库中不存在，继续检查 Samba 用户列表
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SmbDeleteUserResponse {
+                success: false,
+                message: "Failed to check database".to_string(),
+                error: Some(e),
+            });
+        }
+    }
+
+    // 4. 检查用户是否存在于 Samba 用户列表中
+    let output = Command::new("pdbedit")
+        .args(["-L"])
+        .output();
+
+    let user_exists = match output {
+        Ok(result) => {
+            if result.status.success() {
+                let stdout = String::from_utf8_lossy(&result.stdout);
+                stdout.lines().any(|line| {
+                    let parts: Vec<&str> = line.split(':').collect();
+                    !parts.is_empty() && parts[0] == username
+                })
+            } else {
+                false
+            }
+        }
+        Err(_) => false,
+    };
+
+    if !user_exists {
+        return HttpResponse::BadRequest().json(SmbDeleteUserResponse {
+            success: false,
+            message: format!("Samba user '{}' does not exist", username),
+            error: Some("User not found in Samba user list".to_string()),
+        });
+    }
+
+    // 5. 删除 Samba 用户（smbpasswd -x）
     let output = Command::new("smbpasswd")
         .args(["-x", username])
         .output();
@@ -552,9 +618,37 @@ pub async fn smb_delete_user(
         }
     }
 
+    // 6. 删除 Linux 系统用户（userdel）
+    let output = Command::new("userdel")
+        .arg(username)
+        .output();
+
+    match output {
+        Ok(result) => {
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                // 如果用户不存在，跳过错误（因为 Samba 用户已经删除了）
+                if !stderr.contains("does not exist") {
+                    return HttpResponse::InternalServerError().json(SmbDeleteUserResponse {
+                        success: false,
+                        message: "Failed to delete system user".to_string(),
+                        error: Some(format!("{}", stderr)),
+                    });
+                }
+            }
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SmbDeleteUserResponse {
+                success: false,
+                message: "Failed to delete system user".to_string(),
+                error: Some(format!("{}", e)),
+            });
+        }
+    }
+
     HttpResponse::Ok().json(SmbDeleteUserResponse {
         success: true,
-        message: format!("Samba user '{}' deleted successfully", username),
+        message: format!("Samba user '{}' and system user deleted successfully", username),
         error: None,
     })
 }
