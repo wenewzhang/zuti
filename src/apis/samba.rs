@@ -1091,3 +1091,87 @@ pub async fn create_zfs_share(
         error: None,
     })
 }
+
+// ZFS SMB Share 信息
+#[derive(Serialize)]
+pub struct ZfsSmbShareInfo {
+    pub dataset: String,  // 数据集名称，如 "tank/myshare"
+}
+
+// List ZFS SMB Shares 响应结构体
+#[derive(Serialize)]
+pub struct ListZfsSmbSharesResponse {
+    pub success: bool,
+    pub shares: Vec<ZfsSmbShareInfo>,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+// list_zfs_shares API - 获取所有启用了 SMB 共享的 ZFS dataset 列表（需要 JWT 认证）
+// 执行命令: zfs get -H -o name,value sharesmb | grep "on$"
+#[post("/smb/list_zfs_shares")]
+pub async fn list_zfs_shares(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _username = match crate::utils::verify_share_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    // 2. 执行 zfs get 命令获取所有 dataset 的 sharesmb 属性
+    let output = Command::new("zfs")
+        .args([
+            "get",
+            "-H",
+            "-o", "name,value",
+            "sharesmb",
+        ])
+        .output();
+
+    let shares = match output {
+        Ok(result) => {
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                return HttpResponse::InternalServerError().json(ListZfsSmbSharesResponse {
+                    success: false,
+                    shares: vec![],
+                    message: "Failed to list ZFS shares".to_string(),
+                    error: Some(format!("{}", stderr)),
+                });
+            }
+
+            // 解析输出，格式: dataset_name\ton
+            // 只保留 value 为 "on" 的 dataset
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            let mut share_list = Vec::new();
+
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 && parts[1] == "on" {
+                    share_list.push(ZfsSmbShareInfo {
+                        dataset: parts[0].to_string(),
+                    });
+                }
+            }
+
+            share_list
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ListZfsSmbSharesResponse {
+                success: false,
+                shares: vec![],
+                message: "Failed to execute zfs get command".to_string(),
+                error: Some(format!("{}", e)),
+            });
+        }
+    };
+
+    HttpResponse::Ok().json(ListZfsSmbSharesResponse {
+        success: true,
+        shares,
+        message: "ZFS SMB shares listed successfully".to_string(),
+        error: None,
+    })
+}
