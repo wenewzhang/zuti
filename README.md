@@ -158,3 +158,17 @@ list zfs pool
   curl  -k -X POST https://192.168.3.248:8443/smb/list_zfs_pools \
     -H "Authorization: Bearer $TOKEN"
 ```
+
+create zfs pool
+```
+  curl -k -X POST https://<server>/smb/create_zfs_share \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer <token>" \
+      -d '{
+          "share_name": "myshare",
+          "pool_name": "tank",
+          "quota": "100G",
+          "samba_user": "alice"
+      }'
+
+```

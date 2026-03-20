@@ -10,6 +10,38 @@ use crate::schema::users as users_schema;
 use crate::utils::consts::{FORBID_DIRECTORY, FORBIDDEN_USERNAME};
 use crate::utils::conf::merge_samba_configs;
 
+/// 检查指定的用户名是否存在于 Samba 用户列表中（通过 pdbedit -L）
+/// 
+/// # Arguments
+/// * `username` - 要检查的用户名
+/// 
+/// # Returns
+/// * `Ok(true)` - 用户存在
+/// * `Ok(false)` - 用户不存在
+/// * `Err(String)` - 执行命令失败
+fn check_samba_user_exists(username: &str) -> Result<bool, String> {
+    let output = Command::new("pdbedit")
+        .args(["-L"])
+        .output();
+
+    match output {
+        Ok(result) => {
+            if result.status.success() {
+                let stdout = String::from_utf8_lossy(&result.stdout);
+                let exists = stdout.lines().any(|line| {
+                    let parts: Vec<&str> = line.split(':').collect();
+                    !parts.is_empty() && parts[0] == username
+                });
+                Ok(exists)
+            } else {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                Err(format!("pdbedit command failed: {}", stderr))
+            }
+        }
+        Err(e) => Err(format!("Failed to execute pdbedit: {}", e)),
+    }
+}
+
 // Samba public share 请求结构体
 #[derive(Deserialize)]
 pub struct SmbPublicShareRequest {
@@ -592,31 +624,22 @@ pub async fn smb_delete_user(
     }
 
     // 4. 检查用户是否存在于 Samba 用户列表中
-    let output = Command::new("pdbedit")
-        .args(["-L"])
-        .output();
-
-    let user_exists = match output {
-        Ok(result) => {
-            if result.status.success() {
-                let stdout = String::from_utf8_lossy(&result.stdout);
-                stdout.lines().any(|line| {
-                    let parts: Vec<&str> = line.split(':').collect();
-                    !parts.is_empty() && parts[0] == username
-                })
-            } else {
-                false
-            }
+    match check_samba_user_exists(username) {
+        Ok(true) => {}
+        Ok(false) => {
+            return HttpResponse::BadRequest().json(SmbDeleteUserResponse {
+                success: false,
+                message: format!("Samba user '{}' does not exist", username),
+                error: Some("User not found in Samba user list".to_string()),
+            });
         }
-        Err(_) => false,
-    };
-
-    if !user_exists {
-        return HttpResponse::BadRequest().json(SmbDeleteUserResponse {
-            success: false,
-            message: format!("Samba user '{}' does not exist", username),
-            error: Some("User not found in Samba user list".to_string()),
-        });
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SmbDeleteUserResponse {
+                success: false,
+                message: "Failed to check Samba user list".to_string(),
+                error: Some(e),
+            });
+        }
     }
 
     // 5. 删除 Samba 用户（smbpasswd -x）
@@ -821,6 +844,250 @@ pub async fn list_zfs_pools(
         success: true,
         pools: pool_list,
         message: "ZFS pools listed successfully".to_string(),
+        error: None,
+    })
+}
+
+// Create ZFS Share 请求结构体
+#[derive(Deserialize)]
+pub struct CreateZfsShareRequest {
+    pub share_name: String,      // 共享名称（dataset 名称）
+    pub pool_name: String,       // ZFS pool 名称
+    pub quota: String,           // 容量限制，如 "10G", "100M", "1T"
+    pub samba_user: String,      // Samba 用户名（用于设置目录所有者）
+}
+
+// Create ZFS Share 响应结构体
+#[derive(Serialize)]
+pub struct CreateZfsShareResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+// create_zfs_share API - 创建 ZFS 共享数据集（需要 JWT 认证）
+// 执行步骤：
+// 1. zfs create -o sharesmb=on -o compression=lz4 <pool>/<share_name>
+// 2. zfs set quota=<quota> <pool>/<share_name>
+// 3. zfs set mountpoint=<mountpoint> <pool>/<share_name>
+// 4. chown -R <samba_user>:<samba_user> <mountpoint>
+#[post("/smb/create_zfs_share")]
+pub async fn create_zfs_share(
+    req: HttpRequest,
+    share_req: web::Json<CreateZfsShareRequest>,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _username = match crate::utils::verify_share_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let share_name = &share_req.share_name;
+    let pool_name = &share_req.pool_name;
+    let quota = &share_req.quota;
+    let samba_user = &share_req.samba_user;
+    // 自动生成 mountpoint: /pool/share_name
+    let mountpoint = format!("/{}/{}", pool_name, share_name);
+
+    // 2. 验证 share_name 合法性（只允许字母数字、下划线、连字符）
+    if !share_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+        return HttpResponse::BadRequest().json(CreateZfsShareResponse {
+            success: false,
+            message: "Invalid share name format".to_string(),
+            error: Some("Share name must contain only alphanumeric characters, underscores, or hyphens".to_string()),
+        });
+    }
+
+    // 3. 验证 pool_name 不为空
+    if pool_name.is_empty() {
+        return HttpResponse::BadRequest().json(CreateZfsShareResponse {
+            success: false,
+            message: "Pool name cannot be empty".to_string(),
+            error: Some("pool_name is required".to_string()),
+        });
+    }
+
+    // 4. 验证 quota 格式（简单检查是否以 G, M, T, P 等结尾或纯数字）
+    if !quota.is_empty() {
+        let quota_upper = quota.to_uppercase();
+        let valid_suffixes = ['M', 'G', 'T', 'P', 'E'];
+        let is_valid = quota_upper.chars().all(|c| c.is_ascii_digit() || valid_suffixes.contains(&c));
+        if !is_valid {
+            return HttpResponse::BadRequest().json(CreateZfsShareResponse {
+                success: false,
+                message: "Invalid quota format".to_string(),
+                error: Some("Quota must be a number optionally followed by M, G, T, P, or E".to_string()),
+            });
+        }
+    }
+
+    // 5. 验证 samba_user 不为空，并且存在于 Samba 用户列表中
+    if samba_user.is_empty() {
+        return HttpResponse::BadRequest().json(CreateZfsShareResponse {
+            success: false,
+            message: "Samba user cannot be empty".to_string(),
+            error: Some("samba_user is required".to_string()),
+        });
+    }
+
+    // 5.1 检查 samba_user 是否存在于 pdbedit 用户列表中
+    match check_samba_user_exists(samba_user) {
+        Ok(true) => {}
+        Ok(false) => {
+            return HttpResponse::BadRequest().json(CreateZfsShareResponse {
+                success: false,
+                message: format!("Samba user '{}' does not exist", samba_user),
+                error: Some("User not found in Samba user list (pdbedit)".to_string()),
+            });
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                success: false,
+                message: "Failed to check Samba user list".to_string(),
+                error: Some(e),
+            });
+        }
+    }
+
+    let dataset = format!("{}/{}", pool_name, share_name);
+    // mountpoint 自动生成: /pool/share_name
+
+    // Step 1: zfs create -o sharesmb=on -o compression=lz4 <pool>/<share_name>
+    let output = Command::new("zfs")
+        .args([
+            "create",
+            "-o", "sharesmb=on",
+            "-o", "compression=lz4",
+            &dataset,
+        ])
+        .output();
+
+    match output {
+        Ok(result) => {
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                    success: false,
+                    message: format!("Failed to create ZFS dataset: {}", dataset),
+                    error: Some(format!("{}", stderr)),
+                });
+            }
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                success: false,
+                message: format!("Failed to execute zfs create: {}", dataset),
+                error: Some(format!("{}", e)),
+            });
+        }
+    }
+
+    // Step 2: zfs set quota=<quota> <pool>/<share_name>
+    let output = Command::new("zfs")
+        .args([
+            "set",
+            &format!("quota={}", quota),
+            &dataset,
+        ])
+        .output();
+
+    match output {
+        Ok(result) => {
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                // 尝试删除已创建的 dataset
+                let _ = Command::new("zfs").args(["destroy", &dataset]).output();
+                return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                    success: false,
+                    message: format!("Failed to set quota: {}", quota),
+                    error: Some(format!("{}", stderr)),
+                });
+            }
+        }
+        Err(e) => {
+            // 尝试删除已创建的 dataset
+            let _ = Command::new("zfs").args(["destroy", &dataset]).output();
+            return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                success: false,
+                message: format!("Failed to execute zfs set quota: {}", quota),
+                error: Some(format!("{}", e)),
+            });
+        }
+    }
+
+    // Step 3: zfs set mountpoint=<mountpoint> <pool>/<share_name>
+    let output = Command::new("zfs")
+        .args([
+            "set",
+            &format!("mountpoint={}", &mountpoint),
+            &dataset,
+        ])
+        .output();
+
+    match output {
+        Ok(result) => {
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                // 尝试删除已创建的 dataset
+                let _ = Command::new("zfs").args(["destroy", &dataset]).output();
+                return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                    success: false,
+                    message: format!("Failed to set mountpoint: {}", mountpoint),
+                    error: Some(format!("{}", stderr)),
+                });
+            }
+        }
+        Err(e) => {
+            // 尝试删除已创建的 dataset
+            let _ = Command::new("zfs").args(["destroy", &dataset]).output();
+            return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                success: false,
+                message: format!("Failed to execute zfs set mountpoint: {}", mountpoint),
+                error: Some(format!("{}", e)),
+            });
+        }
+    }
+
+    // Step 4: chown -R <samba_user>:<samba_user> <mountpoint>
+    let output = Command::new("chown")
+        .args([
+            "-R",
+            &format!("{}:{}", samba_user, samba_user),
+            &mountpoint,
+        ])
+        .output();
+
+    match output {
+        Ok(result) => {
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                // 尝试删除已创建的 dataset
+                let _ = Command::new("zfs").args(["destroy", &dataset]).output();
+                return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                    success: false,
+                    message: format!("Failed to set ownership for user: {}", samba_user),
+                    error: Some(format!("{}", stderr)),
+                });
+            }
+        }
+        Err(e) => {
+            // 尝试删除已创建的 dataset
+            let _ = Command::new("zfs").args(["destroy", &dataset]).output();
+            return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                success: false,
+                message: format!("Failed to execute chown for user: {}", samba_user),
+                error: Some(format!("{}", e)),
+            });
+        }
+    }
+
+    HttpResponse::Ok().json(CreateZfsShareResponse {
+        success: true,
+        message: format!(
+            "ZFS share '{}' created successfully on pool '{}', mounted at '{}' with quota '{}'",
+            share_name, pool_name, mountpoint, quota
+        ),
         error: None,
     })
 }
