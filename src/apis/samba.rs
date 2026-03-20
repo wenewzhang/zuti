@@ -302,7 +302,7 @@ pub async fn smb_auth_share(
 
     // Set directory permissions: remove write for others if read_only is yes, otherwise add
     let chmod_arg = if share_req.read_only.to_lowercase() == "yes" {
-        "a-w"
+        "a+w"
     } else {
         "a+w"
     };
@@ -354,7 +354,9 @@ pub async fn smb_auth_share(
         .set("path", &share_req.directory)
         .set("browseable", &share_req.browseable.to_lowercase())
         .set("read only", &share_req.read_only.to_lowercase())
-        .set("valid users", &valid_users_str);
+        .set("valid users", &valid_users_str)
+        .set("create mask", "0644")
+        .set("directory mask", "0755");
     
     // 如果 write_list 不为空，则添加 write list 配置
     if let Some(write_list) = write_list_str {
