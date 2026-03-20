@@ -179,3 +179,10 @@ list zfs shares
       -H "Authorization: Bearer $TOKEN"
 
 ```
+
+list directory shares
+```
+  curl -k -X POST https://192.168.3.248:8443/smb/list_dir_shares \
+      -H "Authorization: Bearer $TOKEN"
+
+```
