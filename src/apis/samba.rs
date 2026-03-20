@@ -8,6 +8,7 @@ use std::process::Command;
 use crate::models::User;
 use crate::schema::users as users_schema;
 use crate::utils::consts::{FORBID_DIRECTORY, FORBIDDEN_USERNAME};
+use crate::utils::conf::merge_samba_configs;
 
 // Samba public share 请求结构体
 #[derive(Deserialize)]
@@ -208,7 +209,14 @@ pub async fn smb_public_share(
         });
     }
 
-    // 8. 尝试重新加载 Samba 服务（如果存在）
+    // 8. 合并配置文件并重新加载 Samba 服务
+    if let Err(e) = merge_samba_configs() {
+        return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+            success: false,
+            message: "Failed to merge samba configs".to_string(),
+            error: Some(e),
+        });
+    }
     let _ = Command::new("systemctl")
         .args(["restart", "smbd"])
         .output();
@@ -362,7 +370,14 @@ pub async fn smb_auth_share(
         });
     }
 
-    // 9. 尝试重新加载 Samba 服务（如果存在）
+    // 9. 合并配置文件并重新加载 Samba 服务
+    if let Err(e) = merge_samba_configs() {
+        return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+            success: false,
+            message: "Failed to merge samba configs".to_string(),
+            error: Some(e),
+        });
+    }
     let _ = Command::new("systemctl")
         .args(["restart", "smbd"])
         .output();

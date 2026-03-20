@@ -138,18 +138,12 @@ async fn main() -> std::io::Result<()> {
         }
     }
     // 7. 检查主配置文件是否包含 conf.d 目录引用
-    if let Err(e) = crate::utils::ensure_global_include(smb_conf_path, "/etc/samba/conf.d/public.conf") {
+    if let Err(e) = crate::utils::ensure_global_include(smb_conf_path, "/etc/samba/conf.d/all-share.conf") {
         log::warn!("Failed to update smb.conf: {}", e);
     } else {
-        log::info!("Keep smb.conf global add include /etc/samba/conf.d/public.conf");
+        log::info!("Keep smb.conf global add include /etc/samba/conf.d/all-share.conf");
     }
 
-    // 7. 检查主配置文件是否包含 conf.d 目录引用
-    if let Err(e) = crate::utils::ensure_global_include(smb_conf_path, "/etc/samba/conf.d/private.conf") {
-        log::warn!("Failed to update smb.conf: {}", e);
-    } else {
-        log::info!("Keep smb.conf global add include /etc/samba/conf.d/private.conf");
-    }
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(pool.clone()))

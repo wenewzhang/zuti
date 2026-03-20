@@ -81,6 +81,55 @@ pub fn ensure_global_include<P: AsRef<Path>>(
     Ok(modified)
 }
 
+/// 合并多个 Samba 配置文件到一个文件
+/// 
+/// 将 `/etc/samba/conf.d/public.conf`、
+/// `/etc/samba/conf.d/private.conf`、
+/// `/etc/samba/conf.d/zfs-share.conf`
+/// 合并到 `/etc/samba/conf.d/all-share.conf`
+/// 
+/// # Returns
+/// * `Ok(())` - 合并成功
+/// * `Err(String)` - 操作失败，返回错误信息
+pub fn merge_samba_configs() -> Result<(), String> {
+    let source_files = [
+        "/etc/samba/conf.d/public.conf",
+        "/etc/samba/conf.d/private.conf",
+        "/etc/samba/conf.d/zfs-share.conf",
+    ];
+    let output_file = "/etc/samba/conf.d/all-share.conf";
+
+    let mut merged_content = String::new();
+
+    for file_path in &source_files {
+        let path = Path::new(file_path);
+        if path.exists() {
+            let content = fs::read_to_string(path)
+                .map_err(|e| format!("Failed to read {}: {}", file_path, e))?;
+            
+            if !content.is_empty() {
+                // 添加文件分隔注释
+                if !merged_content.is_empty() {
+                    merged_content.push('\n');
+                }
+                merged_content.push_str(&format!("# Merged from: {}\n", file_path));
+                merged_content.push_str(&content);
+                // 确保文件内容以换行符结尾
+                if !merged_content.ends_with('\n') {
+                    merged_content.push('\n');
+                }
+            }
+        }
+        // 如果源文件不存在，则跳过（不报错）
+    }
+
+    // 写入合并后的文件
+    fs::write(output_file, merged_content)
+        .map_err(|e| format!("Failed to write {}: {}", output_file, e))?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
