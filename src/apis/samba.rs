@@ -963,8 +963,9 @@ pub async fn create_zfs_share(
         Err(_) => false,
     };
 
-    // Step 1: 如果 dataset 不存在，则创建
+    // Step 1: 如果 dataset 不存在则创建，已存在则设置 sharesmb=on
     if !dataset_exists {
+        // 创建新 dataset
         let output = Command::new("zfs")
             .args([
                 "create",
@@ -989,6 +990,31 @@ pub async fn create_zfs_share(
                 return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
                     success: false,
                     message: format!("Failed to execute zfs create: {}", dataset),
+                    error: Some(format!("{}", e)),
+                });
+            }
+        }
+    } else {
+        // Dataset 已存在，设置 sharesmb=on
+        let output = Command::new("zfs")
+            .args(["set", "sharesmb=on", &dataset])
+            .output();
+
+        match output {
+            Ok(result) => {
+                if !result.status.success() {
+                    let stderr = String::from_utf8_lossy(&result.stderr);
+                    return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                        success: false,
+                        message: format!("Failed to set sharesmb=on for dataset: {}", dataset),
+                        error: Some(format!("{}", stderr)),
+                    });
+                }
+            }
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                    success: false,
+                    message: format!("Failed to execute zfs set sharesmb=on: {}", dataset),
                     error: Some(format!("{}", e)),
                 });
             }
