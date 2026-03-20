@@ -187,12 +187,22 @@ list directory shares
 
 ```
 
-delete directory share
+remove directory share
 ```
-  curl -k -X POST https://192.168.3.248:8443/smb/delete_dir_share \
+  curl -k -X POST https://192.168.3.248:8443/smb/remove_dir_share \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer $TOKEN" \
       -d '{
           "share_name": "myshare"
+      }
+```
+
+remove directory share
+```
+  curl -k -X POST https://192.168.3.248:8443/smb/remove_zfs_share \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $TOKEN" \
+      -d '{
+          "dataset": "myshare"
       }
 ```

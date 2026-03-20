@@ -1262,25 +1262,25 @@ pub async fn list_dir_shares(
     })
 }
 
-// Delete Directory Share 请求结构体
+// Remove Directory Share 请求结构体
 #[derive(Deserialize)]
-pub struct DeleteDirShareRequest {
+pub struct RemoveDirShareRequest {
     pub share_name: String,  // 要删除的共享名称（section title）
 }
 
-// Delete Directory Share 响应结构体
+// Remove Directory Share 响应结构体
 #[derive(Serialize)]
-pub struct DeleteDirShareResponse {
+pub struct RemoveDirShareResponse {
     pub success: bool,
     pub message: String,
     pub error: Option<String>,
 }
 
-// delete_dir_share API - 删除 /etc/samba/conf.d/public.conf 或 private.conf 中的共享配置（需要 share/admin 权限）
-#[post("/smb/delete_dir_share")]
-pub async fn delete_dir_share(
+// remove_dir_share API - 删除 /etc/samba/conf.d/public.conf 或 private.conf 中的共享配置（需要 share/admin 权限）
+#[post("/smb/remove_dir_share")]
+pub async fn remove_dir_share(
     req: HttpRequest,
-    delete_req: web::Json<DeleteDirShareRequest>,
+    remove_req: web::Json<RemoveDirShareRequest>,
     pool: web::Data<crate::DbPool>,
 ) -> impl Responder {
     // 1. 验证 JWT token 并检查 share/admin 权限
@@ -1289,11 +1289,11 @@ pub async fn delete_dir_share(
         Err(response) => return response,
     };
 
-    let share_name = &delete_req.share_name;
+    let share_name = &remove_req.share_name;
 
     // 2. 验证 share_name 不为空
     if share_name.is_empty() {
-        return HttpResponse::BadRequest().json(DeleteDirShareResponse {
+        return HttpResponse::BadRequest().json(RemoveDirShareResponse {
             success: false,
             message: "Share name cannot be empty".to_string(),
             error: Some("share_name is required".to_string()),
@@ -1314,7 +1314,7 @@ pub async fn delete_dir_share(
                     deleted_from = "public.conf".to_string();
                     // 写回文件
                     if let Err(e) = ini.write_to_file(&public_conf) {
-                        return HttpResponse::InternalServerError().json(DeleteDirShareResponse {
+                        return HttpResponse::InternalServerError().json(RemoveDirShareResponse {
                             success: false,
                             message: "Failed to write public.conf".to_string(),
                             error: Some(format!("{}", e)),
@@ -1323,7 +1323,7 @@ pub async fn delete_dir_share(
                 }
             }
             Err(e) => {
-                return HttpResponse::InternalServerError().json(DeleteDirShareResponse {
+                return HttpResponse::InternalServerError().json(RemoveDirShareResponse {
                     success: false,
                     message: "Failed to parse public.conf".to_string(),
                     error: Some(format!("{}", e)),
@@ -1343,7 +1343,7 @@ pub async fn delete_dir_share(
                         deleted_from = "private.conf".to_string();
                         // 写回文件
                         if let Err(e) = ini.write_to_file(&private_conf) {
-                            return HttpResponse::InternalServerError().json(DeleteDirShareResponse {
+                            return HttpResponse::InternalServerError().json(RemoveDirShareResponse {
                                 success: false,
                                 message: "Failed to write private.conf".to_string(),
                                 error: Some(format!("{}", e)),
@@ -1352,7 +1352,7 @@ pub async fn delete_dir_share(
                     }
                 }
                 Err(e) => {
-                    return HttpResponse::InternalServerError().json(DeleteDirShareResponse {
+                    return HttpResponse::InternalServerError().json(RemoveDirShareResponse {
                         success: false,
                         message: "Failed to parse private.conf".to_string(),
                         error: Some(format!("{}", e)),
@@ -1364,7 +1364,7 @@ pub async fn delete_dir_share(
 
     // 5. 如果没有找到该 share
     if !found {
-        return HttpResponse::NotFound().json(DeleteDirShareResponse {
+        return HttpResponse::NotFound().json(RemoveDirShareResponse {
             success: false,
             message: format!("Share '{}' not found in public.conf or private.conf", share_name),
             error: Some("Share does not exist".to_string()),
@@ -1385,9 +1385,115 @@ pub async fn delete_dir_share(
         .args(["restart", "smbd"])
         .output();
 
-    HttpResponse::Ok().json(DeleteDirShareResponse {
+    HttpResponse::Ok().json(RemoveDirShareResponse {
         success: true,
         message: format!("Share '{}' deleted successfully from {}", share_name, deleted_from),
+        error: None,
+    })
+}
+
+// Remove ZFS Share 请求结构体
+#[derive(Deserialize)]
+pub struct RemoveZfsShareRequest {
+    pub dataset: String,  // ZFS dataset 名称，如 "tank/myshare"
+}
+
+// Remove ZFS Share 响应结构体
+#[derive(Serialize)]
+pub struct RemoveZfsShareResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+// remove_zfs_share API - 卸载 ZFS dataset 并关闭 SMB 共享（需要 share/admin 权限）
+// 执行步骤：
+// 1. zfs umount <dataset>
+// 2. zfs set sharesmb=off <dataset>
+#[post("/smb/remove_zfs_share")]
+pub async fn remove_zfs_share(
+    req: HttpRequest,
+    remove_req: web::Json<RemoveZfsShareRequest>,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 share/admin 权限
+    let _username = match crate::utils::verify_share_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let dataset = &remove_req.dataset;
+
+    // 2. 验证 dataset 不为空
+    if dataset.is_empty() {
+        return HttpResponse::BadRequest().json(RemoveZfsShareResponse {
+            success: false,
+            message: "Dataset cannot be empty".to_string(),
+            error: Some("dataset is required".to_string()),
+        });
+    }
+
+    // 3. 卸载 dataset: zfs umount <dataset>
+    let output = Command::new("zfs")
+        .args(["umount", dataset])
+        .output();
+
+    match output {
+        Ok(result) => {
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                // 如果错误是 dataset 不存在，继续尝试关闭 sharesmb
+                if !stderr.contains("does not exist") {
+                    return HttpResponse::InternalServerError().json(RemoveZfsShareResponse {
+                        success: false,
+                        message: format!("Failed to umount dataset: {}", dataset),
+                        error: Some(format!("{}", stderr)),
+                    });
+                }
+            }
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(RemoveZfsShareResponse {
+                success: false,
+                message: format!("Failed to execute zfs umount: {}", dataset),
+                error: Some(format!("{}", e)),
+            });
+        }
+    }
+
+    // 4. 关闭 SMB 共享: zfs set sharesmb=off <dataset>
+    let output = Command::new("zfs")
+        .args(["set", "sharesmb=off", dataset])
+        .output();
+
+    match output {
+        Ok(result) => {
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                return HttpResponse::InternalServerError().json(RemoveZfsShareResponse {
+                    success: false,
+                    message: format!("Failed to set sharesmb=off for dataset: {}", dataset),
+                    error: Some(format!("{}", stderr)),
+                });
+            }
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(RemoveZfsShareResponse {
+                success: false,
+                message: format!("Failed to execute zfs set sharesmb=off: {}", dataset),
+                error: Some(format!("{}", e)),
+            });
+        }
+    }
+
+    // 5. 重新加载 Samba 服务
+    let _ = Command::new("systemctl")
+        .args(["restart", "smbd"])
+        .output();
+
+    HttpResponse::Ok().json(RemoveZfsShareResponse {
+        success: true,
+        message: format!("ZFS share '{}' unmounted and SMB sharing disabled", dataset),
         error: None,
     })
 }
