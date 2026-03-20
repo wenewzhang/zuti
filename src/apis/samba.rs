@@ -709,8 +709,8 @@ pub async fn smb_list_users(
     pool: web::Data<crate::DbPool>,
 ) -> impl Responder {
     // 1. 验证 JWT token
-    let _username = match crate::utils::verify_share_access(&req, &pool).await {
-        Ok(username) => username,
+    let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
+        Ok(claims) => claims,
         Err(response) => return response,
     };
 
@@ -793,8 +793,8 @@ pub async fn list_zfs_pools(
     pool: web::Data<crate::DbPool>,
 ) -> impl Responder {
     // 1. 验证 JWT token
-    let _username = match crate::utils::verify_share_access(&req, &pool).await {
-        Ok(username) => username,
+    let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
+        Ok(claims) => claims,
         Err(response) => return response,
     };
 
@@ -1115,8 +1115,8 @@ pub async fn list_zfs_shares(
     pool: web::Data<crate::DbPool>,
 ) -> impl Responder {
     // 1. 验证 JWT token
-    let _username = match crate::utils::verify_share_access(&req, &pool).await {
-        Ok(username) => username,
+    let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
+        Ok(claims) => claims,
         Err(response) => return response,
     };
 
@@ -1172,6 +1172,95 @@ pub async fn list_zfs_shares(
         success: true,
         shares,
         message: "ZFS SMB shares listed successfully".to_string(),
+        error: None,
+    })
+}
+
+// Directory Share 信息
+#[derive(Serialize)]
+pub struct DirShareInfo {
+    pub name: String,       // 共享名称（section title）
+    pub config_file: String, // 配置文件来源（public.conf 或 private.conf）
+}
+
+// List Directory Shares 响应结构体
+#[derive(Serialize)]
+pub struct ListDirSharesResponse {
+    pub success: bool,
+    pub shares: Vec<DirShareInfo>,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+// list_dir_shares API - 读取 /etc/samba/conf.d/public.conf 和 private.conf 中的所有共享名称（需要 JWT 认证）
+#[post("/smb/list_dir_shares")]
+pub async fn list_dir_shares(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    let mut shares = Vec::new();
+    let conf_dir = Path::new("/etc/samba/conf.d");
+
+    // 2. 读取 public.conf
+    let public_conf = conf_dir.join("public.conf");
+    if public_conf.exists() {
+        match Ini::load_from_file(&public_conf) {
+            Ok(ini) => {
+                for section in ini.sections() {
+                    if let Some(name) = section {
+                        shares.push(DirShareInfo {
+                            name: name.to_string(),
+                            config_file: "public.conf".to_string(),
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(ListDirSharesResponse {
+                    success: false,
+                    shares: vec![],
+                    message: "Failed to parse public.conf".to_string(),
+                    error: Some(format!("{}", e)),
+                });
+            }
+        }
+    }
+
+    // 3. 读取 private.conf
+    let private_conf = conf_dir.join("private.conf");
+    if private_conf.exists() {
+        match Ini::load_from_file(&private_conf) {
+            Ok(ini) => {
+                for section in ini.sections() {
+                    if let Some(name) = section {
+                        shares.push(DirShareInfo {
+                            name: name.to_string(),
+                            config_file: "private.conf".to_string(),
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(ListDirSharesResponse {
+                    success: false,
+                    shares,
+                    message: "Failed to parse private.conf".to_string(),
+                    error: Some(format!("{}", e)),
+                });
+            }
+        }
+    }
+
+    HttpResponse::Ok().json(ListDirSharesResponse {
+        success: true,
+        shares,
+        message: "Directory shares listed successfully".to_string(),
         error: None,
     })
 }
