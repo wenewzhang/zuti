@@ -953,33 +953,45 @@ pub async fn create_zfs_share(
     let dataset = format!("{}/{}", pool_name, share_name);
     // mountpoint 自动生成: /pool/share_name
 
-    // Step 1: zfs create -o sharesmb=on -o compression=lz4 <pool>/<share_name>
-    let output = Command::new("zfs")
-        .args([
-            "create",
-            "-o", "sharesmb=on",
-            "-o", "compression=lz4",
-            &dataset,
-        ])
+    // Step 0: 检查 dataset 是否已存在
+    let check_output = Command::new("zfs")
+        .args(["list", "-H", "-o", "name", &dataset])
         .output();
 
-    match output {
-        Ok(result) => {
-            if !result.status.success() {
-                let stderr = String::from_utf8_lossy(&result.stderr);
+    let dataset_exists = match check_output {
+        Ok(result) => result.status.success(),
+        Err(_) => false,
+    };
+
+    // Step 1: 如果 dataset 不存在，则创建
+    if !dataset_exists {
+        let output = Command::new("zfs")
+            .args([
+                "create",
+                "-o", "sharesmb=on",
+                "-o", "compression=lz4",
+                &dataset,
+            ])
+            .output();
+
+        match output {
+            Ok(result) => {
+                if !result.status.success() {
+                    let stderr = String::from_utf8_lossy(&result.stderr);
+                    return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                        success: false,
+                        message: format!("Failed to create ZFS dataset: {}", dataset),
+                        error: Some(format!("{}", stderr)),
+                    });
+                }
+            }
+            Err(e) => {
                 return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
                     success: false,
-                    message: format!("Failed to create ZFS dataset: {}", dataset),
-                    error: Some(format!("{}", stderr)),
+                    message: format!("Failed to execute zfs create: {}", dataset),
+                    error: Some(format!("{}", e)),
                 });
             }
-        }
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
-                success: false,
-                message: format!("Failed to execute zfs create: {}", dataset),
-                error: Some(format!("{}", e)),
-            });
         }
     }
 

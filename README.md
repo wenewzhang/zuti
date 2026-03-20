@@ -194,7 +194,7 @@ remove directory share
       -H "Authorization: Bearer $TOKEN" \
       -d '{
           "share_name": "myshare"
-      }
+      }'
 ```
 
 remove directory share
@@ -203,6 +203,6 @@ remove directory share
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer $TOKEN" \
       -d '{
-          "dataset": "myshare"
-      }
+          "dataset": "datapool/goodshare"
+      }'
 ```
