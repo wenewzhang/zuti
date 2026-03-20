@@ -186,3 +186,13 @@ list directory shares
       -H "Authorization: Bearer $TOKEN"
 
 ```
+
+delete directory share
+```
+  curl -k -X POST https://192.168.3.248:8443/smb/delete_dir_share \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $TOKEN" \
+      -d '{
+          "share_name": "myshare"
+      }
+```

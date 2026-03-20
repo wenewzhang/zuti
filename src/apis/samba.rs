@@ -1180,7 +1180,6 @@ pub async fn list_zfs_shares(
 #[derive(Serialize)]
 pub struct DirShareInfo {
     pub name: String,       // 共享名称（section title）
-    pub config_file: String, // 配置文件来源（public.conf 或 private.conf）
 }
 
 // List Directory Shares 响应结构体
@@ -1216,7 +1215,6 @@ pub async fn list_dir_shares(
                     if let Some(name) = section {
                         shares.push(DirShareInfo {
                             name: name.to_string(),
-                            config_file: "public.conf".to_string(),
                         });
                     }
                 }
@@ -1241,7 +1239,6 @@ pub async fn list_dir_shares(
                     if let Some(name) = section {
                         shares.push(DirShareInfo {
                             name: name.to_string(),
-                            config_file: "private.conf".to_string(),
                         });
                     }
                 }
@@ -1261,6 +1258,136 @@ pub async fn list_dir_shares(
         success: true,
         shares,
         message: "Directory shares listed successfully".to_string(),
+        error: None,
+    })
+}
+
+// Delete Directory Share 请求结构体
+#[derive(Deserialize)]
+pub struct DeleteDirShareRequest {
+    pub share_name: String,  // 要删除的共享名称（section title）
+}
+
+// Delete Directory Share 响应结构体
+#[derive(Serialize)]
+pub struct DeleteDirShareResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+// delete_dir_share API - 删除 /etc/samba/conf.d/public.conf 或 private.conf 中的共享配置（需要 share/admin 权限）
+#[post("/smb/delete_dir_share")]
+pub async fn delete_dir_share(
+    req: HttpRequest,
+    delete_req: web::Json<DeleteDirShareRequest>,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 share/admin 权限
+    let _username = match crate::utils::verify_share_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let share_name = &delete_req.share_name;
+
+    // 2. 验证 share_name 不为空
+    if share_name.is_empty() {
+        return HttpResponse::BadRequest().json(DeleteDirShareResponse {
+            success: false,
+            message: "Share name cannot be empty".to_string(),
+            error: Some("share_name is required".to_string()),
+        });
+    }
+
+    let conf_dir = Path::new("/etc/samba/conf.d");
+    let mut found = false;
+    let mut deleted_from = String::new();
+
+    // 3. 尝试从 public.conf 中删除
+    let public_conf = conf_dir.join("public.conf");
+    if public_conf.exists() {
+        match Ini::load_from_file(&public_conf) {
+            Ok(mut ini) => {
+                if ini.delete(Some(share_name)).is_some() {
+                    found = true;
+                    deleted_from = "public.conf".to_string();
+                    // 写回文件
+                    if let Err(e) = ini.write_to_file(&public_conf) {
+                        return HttpResponse::InternalServerError().json(DeleteDirShareResponse {
+                            success: false,
+                            message: "Failed to write public.conf".to_string(),
+                            error: Some(format!("{}", e)),
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(DeleteDirShareResponse {
+                    success: false,
+                    message: "Failed to parse public.conf".to_string(),
+                    error: Some(format!("{}", e)),
+                });
+            }
+        }
+    }
+
+    // 4. 如果不在 public.conf 中，尝试从 private.conf 中删除
+    if !found {
+        let private_conf = conf_dir.join("private.conf");
+        if private_conf.exists() {
+            match Ini::load_from_file(&private_conf) {
+                Ok(mut ini) => {
+                    if ini.delete(Some(share_name)).is_some() {
+                        found = true;
+                        deleted_from = "private.conf".to_string();
+                        // 写回文件
+                        if let Err(e) = ini.write_to_file(&private_conf) {
+                            return HttpResponse::InternalServerError().json(DeleteDirShareResponse {
+                                success: false,
+                                message: "Failed to write private.conf".to_string(),
+                                error: Some(format!("{}", e)),
+                            });
+                        }
+                    }
+                }
+                Err(e) => {
+                    return HttpResponse::InternalServerError().json(DeleteDirShareResponse {
+                        success: false,
+                        message: "Failed to parse private.conf".to_string(),
+                        error: Some(format!("{}", e)),
+                    });
+                }
+            }
+        }
+    }
+
+    // 5. 如果没有找到该 share
+    if !found {
+        return HttpResponse::NotFound().json(DeleteDirShareResponse {
+            success: false,
+            message: format!("Share '{}' not found in public.conf or private.conf", share_name),
+            error: Some("Share does not exist".to_string()),
+        });
+    }
+
+        // 8. 合并配置文件并重新加载 Samba 服务
+    if let Err(e) = merge_samba_configs() {
+        return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+            success: false,
+            message: "Failed to merge samba configs".to_string(),
+            error: Some(e),
+        });
+    }
+    
+    // 6. 重新加载 Samba 服务
+    let _ = Command::new("systemctl")
+        .args(["restart", "smbd"])
+        .output();
+
+    HttpResponse::Ok().json(DeleteDirShareResponse {
+        success: true,
+        message: format!("Share '{}' deleted successfully from {}", share_name, deleted_from),
         error: None,
     })
 }

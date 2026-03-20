@@ -169,6 +169,7 @@ async fn main() -> std::io::Result<()> {
             .service(apis::samba::create_zfs_share)
             .service(apis::samba::list_zfs_shares)
             .service(apis::samba::list_dir_shares)
+            .service(apis::samba::delete_dir_share)
     })
     .bind_openssl(&server_address, builder)?
     .run()
