@@ -116,11 +116,11 @@ smb auth share
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
-      "directory": "/data/shared_folder",
+      "directory": "/datapool/xl",
       "browseable": "yes",
-      "read_only": "no",
-      "valid_users": ["user1", "user2", "user3"],
-      "write_list": ["user1", "user2"]
+      "read_only": "yes",
+      "valid_users": ["reader1", "reader2", "writer1", "writer2"],
+      "write_list": ["writer1", "writer2"]
     }'
 
 ```
@@ -131,8 +131,8 @@ samba user
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
-      "username": "shareuser1",
-      "password": "password123"
+      "username": "reader1",
+      "password": "123321"
     }'
 ```
 
@@ -150,5 +150,11 @@ delete samba user
 list user
 ```
   curl  -k -X POST https://192.168.3.248:8443/smb/list_users \
+    -H "Authorization: Bearer $TOKEN"
+```
+
+list zfs pool
+```
+  curl  -k -X POST https://192.168.3.248:8443/smb/list_zfs_pools \
     -H "Authorization: Bearer $TOKEN"
 ```

@@ -747,3 +747,80 @@ pub async fn smb_list_users(
         error: None,
     })
 }
+
+// ZFS Pool 信息
+#[derive(Serialize)]
+pub struct ZfsPoolInfo {
+    pub name: String,
+}
+
+// List ZFS pools 响应结构体
+#[derive(Serialize)]
+pub struct ListZfsPoolsResponse {
+    pub success: bool,
+    pub pools: Vec<ZfsPoolInfo>,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+// list_zfs_pools API - 获取所有 ZFS pool 名称列表（需要 JWT 认证）
+#[post("/smb/list_zfs_pools")]
+pub async fn list_zfs_pools(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _username = match crate::utils::verify_share_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    // 2. 执行 zpool list -H -o name 命令获取所有 pool 名称
+    let output = Command::new("zpool")
+        .args(["list", "-H", "-o", "name"])
+        .output();
+
+    let pool_list = match output {
+        Ok(result) => {
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                return HttpResponse::InternalServerError().json(ListZfsPoolsResponse {
+                    success: false,
+                    pools: vec![],
+                    message: "Failed to list ZFS pools".to_string(),
+                    error: Some(format!("{}", stderr)),
+                });
+            }
+
+            // 解析 zpool list 输出，每行一个 pool 名称
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            let mut pools = Vec::new();
+
+            for line in stdout.lines() {
+                let pool_name = line.trim();
+                if !pool_name.is_empty() {
+                    pools.push(ZfsPoolInfo {
+                        name: pool_name.to_string(),
+                    });
+                }
+            }
+
+            pools
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ListZfsPoolsResponse {
+                success: false,
+                pools: vec![],
+                message: "Failed to list ZFS pools".to_string(),
+                error: Some(format!("{}", e)),
+            });
+        }
+    };
+
+    HttpResponse::Ok().json(ListZfsPoolsResponse {
+        success: true,
+        pools: pool_list,
+        message: "ZFS pools listed successfully".to_string(),
+        error: None,
+    })
+}
