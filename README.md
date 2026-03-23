@@ -218,11 +218,17 @@ Docker pull image
   curl -k -X POST https://192.168.3.248:8443/docker/pull_image/start \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"image_name": "openjdk:27-ea-oraclelinux9"}'
+    -d '{"image_name": "golang:tip-trixie"}'
 ```
 
 Docker pull image progress
 ```
-  curl -k -X GET https://192.168.3.248:8443/docker/pull_image/task/cb304e1d-7faf-44d6-a75f-08a47f9089c9 \
+  curl -k -X GET https://192.168.3.248:8443/docker/pull_image/task/f1497a6e-ea9b-4a14-878c-192901d21ee0 \
+    -H "Authorization: Bearer $TOKEN" 
+```
+
+delete image by id
+```
+  curl -k -X DELETE https://192.168.3.248:8443/docker/delete_image/1a1e63136420 \
     -H "Authorization: Bearer $TOKEN" 
 ```
