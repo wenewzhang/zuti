@@ -3311,6 +3311,7 @@ dependencies = [
  "diesel",
  "dotenvy",
  "env_logger",
+ "futures-util",
  "jsonwebtoken",
  "log",
  "openssl",

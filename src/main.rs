@@ -172,6 +172,7 @@ async fn main() -> std::io::Result<()> {
             .service(apis::samba::remove_dir_share)
             .service(apis::samba::remove_zfs_share)
             .service(apis::docker::get_images)
+            .service(apis::docker::pull_image)
     })
     .bind_openssl(&server_address, builder)?
     .run()

@@ -206,3 +206,17 @@ remove directory share
           "dataset": "datapool/goodshare"
       }'
 ```
+
+Docker list images
+```
+  curl -k -X GET https://192.168.3.248:8443/docker/get_images \
+      -H "Authorization: Bearer $TOKEN"
+```
+
+Docker pull image
+```
+  curl -X POST https://localhost:8443/docker/pull_image \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"image_name": "nginx:latest"}'
+```
