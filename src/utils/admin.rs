@@ -6,6 +6,7 @@ use crate::jwt::extract_and_validate_token;
 use crate::models::User;
 use crate::schema::users;
 use crate::schema::users::dsl::*;
+use crate::utils::token_cache::TOKEN_CACHE;
 
 /// 通用错误响应结构体
 #[derive(Serialize)]
@@ -86,6 +87,7 @@ impl std::fmt::Display for AdminCheckError {
 impl std::error::Error for AdminCheckError {}
 
 /// 验证 JWT token 并检查其与数据库中存储的 token 是否匹配
+/// 使用内存缓存减少数据库查询
 /// 返回 Ok(claims) 如果验证成功，否则返回 Err(HttpResponse)
 pub async fn validate_token_with_db(
     req: &HttpRequest,
@@ -97,37 +99,51 @@ pub async fn validate_token_with_db(
         Err(response) => return Err(response),
     };
 
-    // 2. 验证 token 是否有效（比较 claims.jti 与数据库中的 token）
     let username = claims.sub.clone();
     let token_jti = claims.jti.clone();
-    
+
+    // 2. 检查内存缓存
+    if let Some((cached_user, _cached_type)) = TOKEN_CACHE.get(&token_jti) {
+        // 缓存命中，验证用户名匹配
+        if cached_user == username {
+            // 可以选择将 user_type 存入 claims 的扩展字段
+            log::debug!("Token cache hit for user: {}", username);
+            return Ok(claims);
+        }
+    }
+
+    // 3. 缓存未命中，查询数据库验证 token
     let pool_clone = pool.get_ref().clone();
+    let jti_for_cache = token_jti.clone();
+    let username_for_db = username.clone();
     
-    let token_valid: Result<bool, String> = web::block(move || {
+    let validation_result: Result<(bool, String), String> = web::block(move || {
         let mut conn = pool_clone.get().map_err(|e| format!("Database connection error: {}", e))?;
         
         let user: Option<User> = users::table
-            .filter(users::name.eq(&username))
+            .filter(users::name.eq(&username_for_db))
             .first::<User>(&mut conn)
             .optional()
             .map_err(|e| format!("Database query error: {}", e))?;
         
         match user {
             Some(u) => {
-                match u.token {
-                    Some(stored_token) => Ok(stored_token == token_jti),
-                    None => Ok(false),
-                }
+                let valid = u.token.as_ref() == Some(&jti_for_cache);
+                Ok((valid, u.type_))
             }
-            None => Ok(false),
+            None => Ok((false, String::new())),
         }
     })
     .await
     .unwrap();
 
-    match token_valid {
-        Ok(true) => Ok(claims),
-        Ok(false) => {
+    match validation_result {
+        Ok((true, user_type)) => {
+            // 验证成功，写入缓存
+            TOKEN_CACHE.insert(token_jti, username, user_type);
+            Ok(claims)
+        }
+        Ok((false, _)) => {
             Err(HttpResponse::Unauthorized()
                 .content_type(ContentType::json())
                 .body(serde_json::to_string(&ErrorResponse {

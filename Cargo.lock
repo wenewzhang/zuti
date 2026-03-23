@@ -3317,6 +3317,7 @@ dependencies = [
  "log",
  "openssl",
  "pam",
+ "rand 0.8.5",
  "regex",
  "rust-ini",
  "serde",

@@ -39,6 +39,7 @@ rust-ini = "0.21"
 bollard = "0.20.2"
 futures-util = "0.3"
 lazy_static = "1.4"
+rand = "0.8"
 
 [dev-dependencies]
 tempfile = "3"
