@@ -218,11 +218,11 @@ Docker pull image
   curl -k -X POST https://192.168.3.248:8443/docker/pull_image/start \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"image_name": "openjdk:latest"}'
+    -d '{"image_name": "openjdk:27-ea-oraclelinux9"}'
 ```
 
 Docker pull image progress
 ```
-  curl -k -X GET https://192.168.3.248:8443/docker/pull_image/task/11 \
-    -H "Authorization: Bearer $TOKEN" \
+  curl -k -X GET https://192.168.3.248:8443/docker/pull_image/task/cb304e1d-7faf-44d6-a75f-08a47f9089c9 \
+    -H "Authorization: Bearer $TOKEN" 
 ```

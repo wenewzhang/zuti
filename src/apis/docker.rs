@@ -394,11 +394,11 @@ fn calculate_progress(status: &bollard::models::CreateImageInfo) -> u8 {
             if let Some(ref detail) = status.progress_detail {
                 if let (Some(current), Some(total)) = (detail.current, detail.total) {
                     if total > 0 {
-                        return (40 + (current as f64 / total as f64 * 40.0) as u64) as u8;
+                        return (20 + (current as f64 / total as f64 * 60.0) as u64) as u8;
                     }
                 }
             }
-            return 40;
+            return 80;
         } else if s.contains("Extracting") {
             if let Some(ref detail) = status.progress_detail {
                 if let (Some(current), Some(total)) = (detail.current, detail.total) {
@@ -407,7 +407,7 @@ fn calculate_progress(status: &bollard::models::CreateImageInfo) -> u8 {
                     }
                 }
             }
-            return 80;
+            return 95;
         } else if s.contains("Pull complete") || s.contains("Downloaded newer image") {
             return 95;
         } else if s.contains("Image is up to date") {
