@@ -28,15 +28,36 @@ pub enum TaskStatus {
     Failed,     // Failed
 }
 
+/// Layer download status
+#[derive(Serialize, Clone, Debug)]
+pub struct LayerStatus {
+    pub layer_id: String,
+    pub state: LayerState,
+    pub current: i64,      // Downloaded bytes
+    pub total: i64,        // Total bytes
+    pub progress: u8,      // 0-100 for this layer
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub enum LayerState {
+    Waiting,      // Waiting to download
+    Downloading,  // Currently downloading
+    Extracting,   // Extracting layer
+    Complete,     // Download and extract done
+}
+
 /// Pull Task Information
 #[derive(Serialize, Clone)]
 pub struct PullTask {
     pub task_id: String,
     pub image_name: String,
     pub status: TaskStatus,
-    pub progress: u8,           // 0-100
+    pub progress: u8,           // 0-100 overall
     pub current_layer: String,  // Current layer being processed
     pub message: String,        // Status description
+    pub total_layers: usize,
+    pub completed_layers: usize,
+    pub layers: Vec<LayerStatus>, // All layers status
     pub created_at: u64,
     pub updated_at: u64,
 }
@@ -207,6 +228,9 @@ pub async fn start_pull_image(
         progress: 0,
         current_layer: String::new(),
         message: "Waiting to execute".to_string(),
+        total_layers: 0,
+        completed_layers: 0,
+        layers: Vec::new(),
         created_at: now,
         updated_at: now,
     };
@@ -318,7 +342,7 @@ async fn execute_pull_task(task_id: String, image_name: String) {
 
     update_task(&task_id, |t| {
         t.message = format!("Starting pull {}:{} ...", repo, tag);
-        t.progress = 10;
+        t.progress = 5;
     });
 
     // Create pull options
@@ -328,29 +352,82 @@ async fn execute_pull_task(task_id: String, image_name: String) {
         ..Default::default()
     });
 
-    // Execute pull
+    // Execute pull with layer tracking
     let mut stream = docker.create_image(options, None, None);
     let mut last_status = String::new();
 
     while let Some(result) = stream.next().await {
         match result {
             Ok(status) => {
-                // Update status info
+                // Update status message
                 if let Some(status_str) = &status.status {
                     last_status = status_str.clone();
                 }
 
-                // Calculate progress (layer-based estimate)
-                let progress = calculate_progress(&status);
+                // Get layer ID
+                let layer_id = status.id.clone().unwrap_or_default();
 
+                // Update layer tracking and calculate overall progress
                 update_task(&task_id, |t| {
-                    t.message = last_status.clone();
-                    t.progress = (10 + (progress as f64 * 0.9) as u8).min(100); // 10-100
+                    // Find or create layer entry
+                    let layer_index = t.layers.iter().position(|l| l.layer_id == layer_id);
+                    
+                    let layer_state = match status.status.as_deref() {
+                        Some(s) if s.contains("Pulling fs layer") => Some(LayerState::Waiting),
+                        Some(s) if s.contains("Downloading") => Some(LayerState::Downloading),
+                        Some(s) if s.contains("Extracting") => Some(LayerState::Extracting),
+                        Some(s) if s.contains("Pull complete") || s.contains("Already exists") => Some(LayerState::Complete),
+                        _ => None,
+                    };
 
-                    // Update current layer info
-                    if let Some(id) = &status.id {
-                        t.current_layer = id.clone();
+                    if let Some(state) = layer_state {
+                        // Calculate layer progress from progress_detail
+                        let (current, total, layer_progress) = status.progress_detail.as_ref()
+                            .and_then(|d| {
+                                match (d.current, d.total) {
+                                    (Some(c), Some(tot)) if tot > 0 => {
+                                        let prog = ((c as f64 / tot as f64) * 100.0) as u8;
+                                        Some((c, tot, prog))
+                                    }
+                                    _ => None
+                                }
+                            })
+                            .unwrap_or((0, 0, match state {
+                                LayerState::Waiting => 0,
+                                LayerState::Downloading => 50,
+                                LayerState::Extracting => 90,
+                                LayerState::Complete => 100,
+                            }));
+
+                        if let Some(index) = layer_index {
+                            // Update existing layer
+                            t.layers[index].state = state.clone();
+                            t.layers[index].current = current;
+                            t.layers[index].total = total;
+                            t.layers[index].progress = layer_progress;
+                        } else if !layer_id.is_empty() {
+                            // Add new layer
+                            t.layers.push(LayerStatus {
+                                layer_id: layer_id.clone(),
+                                state: state.clone(),
+                                current,
+                                total,
+                                progress: layer_progress,
+                            });
+                            t.total_layers = t.layers.len();
+                        }
+
+                        // Count completed layers
+                        t.completed_layers = t.layers.iter()
+                            .filter(|l| matches!(l.state, LayerState::Complete))
+                            .count();
+
+                        // Calculate overall progress
+                        t.progress = calculate_overall_progress(t);
+                        t.current_layer = layer_id;
                     }
+
+                    t.message = last_status.clone();
                 });
 
                 // Check for errors
@@ -377,42 +454,37 @@ async fn execute_pull_task(task_id: String, image_name: String) {
         t.status = TaskStatus::Completed;
         t.message = format!("Image pulled successfully: {}", last_status);
         t.progress = 100;
+        t.completed_layers = t.total_layers;
         t.current_layer = String::new();
     });
 }
 
-/// Estimate progress based on Docker API status
-fn calculate_progress(status: &bollard::models::CreateImageInfo) -> u8 {
-    // Simple estimate based on status keywords
-    if let Some(ref s) = status.status {
-        if s.contains("Pulling from") {
-            return 15;
-        } else if s.contains("Pulling fs layer") {
-            return 20;
-        } else if s.contains("Downloading") {
-            // Try to calculate from progress detail
-            if let Some(ref detail) = status.progress_detail {
-                if let (Some(current), Some(total)) = (detail.current, detail.total) {
-                    if total > 0 {
-                        return (20 + (current as f64 / total as f64 * 60.0) as u64) as u8;
-                    }
-                }
-            }
-            return 80;
-        } else if s.contains("Extracting") {
-            if let Some(ref detail) = status.progress_detail {
-                if let (Some(current), Some(total)) = (detail.current, detail.total) {
-                    if total > 0 {
-                        return (80 + (current as f64 / total as f64 * 15.0) as u64) as u8;
-                    }
-                }
-            }
-            return 95;
-        } else if s.contains("Pull complete") || s.contains("Downloaded newer image") {
-            return 95;
-        } else if s.contains("Image is up to date") {
-            return 100;
-        }
+/// Calculate overall progress based on all layers
+/// Weighted formula: completed_layers * 100% + downloading_layer_progress
+fn calculate_overall_progress(task: &PullTask) -> u8 {
+    if task.total_layers == 0 {
+        return 5; // Initial phase
     }
-    50 // Default
+
+    // Weight distribution:
+    // - Complete layers: 100% each
+    // - Downloading layers: progress varies (0-90%)
+    // - Extracting layers: 95% each
+    // - Waiting layers: 0%
+    
+    let total_weight: f64 = task.total_layers as f64 * 100.0;
+    let mut accumulated_weight: f64 = 0.0;
+
+    for layer in &task.layers {
+        accumulated_weight += match layer.state {
+            LayerState::Complete => 100.0,
+            LayerState::Extracting => 95.0,
+            LayerState::Downloading => layer.progress as f64 * 0.9, // Max 90% during download
+            LayerState::Waiting => 0.0,
+        };
+    }
+
+    // Calculate percentage (5-100 range)
+    let progress = (accumulated_weight / total_weight * 95.0) as u8 + 5;
+    progress.min(100)
 }
