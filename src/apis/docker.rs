@@ -1,6 +1,6 @@
-use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
+use actix_web::{delete, get, post, web, HttpRequest, HttpResponse, Responder};
 use bollard::Docker;
-use bollard::query_parameters::{CreateImageOptions, ListImagesOptions};
+use bollard::query_parameters::{CreateImageOptions, ListImagesOptions, RemoveImageOptions};
 use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -134,6 +134,14 @@ pub struct GetImagesResponse {
     pub images: Vec<DockerImage>,
 }
 
+/// Delete image response
+#[derive(Serialize)]
+pub struct DeleteImageResponse {
+    pub success: bool,
+    pub message: String,
+    pub deleted: Vec<String>,
+}
+
 // ============================================================================
 // API Endpoints
 // ============================================================================
@@ -183,6 +191,112 @@ pub async fn get_images(req: HttpRequest, pool: web::Data<DbPool>) -> impl Respo
             message: format!("Failed to list images: {}", e),
             images: vec![],
         }),
+    }
+}
+
+/// Delete Docker Image by short ID (Admin Only)
+///
+/// # Endpoint
+/// DELETE /docker/delete_image/{short_id}
+///
+/// # Path Parameters
+/// - `short_id`: First 12 characters of sha256 image ID
+///
+/// # Response
+/// { "success": true, "message": "Image deleted", "deleted": ["sha256:xxx..."] }
+#[delete("/docker/delete_image/{short_id}")]
+pub async fn delete_image(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    path: web::Path<String>,
+) -> impl Responder {
+    // 1. Verify admin
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let short_id = path.into_inner();
+
+    // 2. Validate short_id length
+    if short_id.len() != 12 {
+        return HttpResponse::BadRequest().json(DeleteImageResponse {
+            success: false,
+            message: "Invalid image ID format, expected 12 characters".to_string(),
+            deleted: vec![],
+        });
+    }
+
+    // 3. Connect to Docker/Podman
+    let docker = match Docker::connect_with_local_defaults() {
+        Ok(d) => d,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(DeleteImageResponse {
+                success: false,
+                message: format!("Failed to connect to Docker: {}", e),
+                deleted: vec![],
+            });
+        }
+    };
+
+    // 4. Find full image ID by short ID
+    let images = match docker.list_images(Some(ListImagesOptions { all: true, ..Default::default() })).await {
+        Ok(imgs) => imgs,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(DeleteImageResponse {
+                success: false,
+                message: format!("Failed to list images: {}", e),
+                deleted: vec![],
+            });
+        }
+    };
+
+    // Find matching image
+    let full_id = images
+        .into_iter()
+        .find(|img| {
+            let img_short_id = format_short_id(&img.id);
+            img_short_id == short_id
+        })
+        .map(|img| img.id);
+
+    let full_id = match full_id {
+        Some(id) => id,
+        None => {
+            return HttpResponse::NotFound().json(DeleteImageResponse {
+                success: false,
+                message: format!("Image with ID '{}' not found", short_id),
+                deleted: vec![],
+            });
+        }
+    };
+
+    // 5. Delete image
+    let options = Some(RemoveImageOptions {
+        force: false,
+        ..Default::default()
+    });
+
+    match docker.remove_image(&full_id, options, None).await {
+        Ok(deleted_images) => {
+            let deleted_ids: Vec<String> = deleted_images
+                .into_iter()
+                .filter_map(|d| d.deleted.or(d.untagged))
+                .collect();
+
+            HttpResponse::Ok().json(DeleteImageResponse {
+                success: true,
+                message: format!("Image '{}' deleted successfully", short_id),
+                deleted: deleted_ids,
+            })
+        }
+        Err(e) => {
+            HttpResponse::InternalServerError().json(DeleteImageResponse {
+                success: false,
+                message: format!("Failed to delete image: {}", e),
+                deleted: vec![],
+            })
+        }
     }
 }
 

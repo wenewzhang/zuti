@@ -172,6 +172,7 @@ async fn main() -> std::io::Result<()> {
             .service(apis::samba::remove_dir_share)
             .service(apis::samba::remove_zfs_share)
             .service(apis::docker::get_images)
+            .service(apis::docker::delete_image)
             .service(apis::docker::start_pull_image)
             .service(apis::docker::get_pull_task)
             .service(apis::docker::list_pull_tasks)
