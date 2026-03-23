@@ -215,8 +215,14 @@ Docker list images
 
 Docker pull image
 ```
-  curl -X POST https://localhost:8443/docker/pull_image \
+  curl -k -X POST https://192.168.3.248:8443/docker/pull_image/start \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"image_name": "nginx:latest"}'
+    -d '{"image_name": "openjdk:latest"}'
+```
+
+Docker pull image progress
+```
+  curl -k -X GET https://192.168.3.248:8443/docker/pull_image/task/11 \
+    -H "Authorization: Bearer $TOKEN" \
 ```
