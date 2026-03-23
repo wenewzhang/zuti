@@ -92,6 +92,12 @@ pub struct ListTasksResponse {
     pub message: String,
 }
 
+/// Format image ID: remove "sha256:" prefix and truncate to 12 chars
+fn format_short_id(id: &str) -> String {
+    let without_prefix = id.strip_prefix("sha256:").unwrap_or(id);
+    without_prefix.chars().take(12).collect()
+}
+
 fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -118,14 +124,7 @@ where
 #[derive(Serialize, Deserialize)]
 pub struct DockerImage {
     pub id: String,
-    pub parent_id: String,
     pub repo_tags: Vec<String>,
-    pub repo_digests: Vec<String>,
-    pub created: i64,
-    pub size: i64,
-    pub shared_size: i64,
-    pub labels: Option<std::collections::HashMap<String, String>>,
-    pub containers: i64,
 }
 
 #[derive(Serialize)]
@@ -168,15 +167,8 @@ pub async fn get_images(req: HttpRequest, pool: web::Data<DbPool>) -> impl Respo
             let docker_images: Vec<DockerImage> = images
                 .into_iter()
                 .map(|img| DockerImage {
-                    id: img.id,
-                    parent_id: img.parent_id,
+                    id: format_short_id(&img.id),
                     repo_tags: img.repo_tags,
-                    repo_digests: img.repo_digests,
-                    created: img.created,
-                    size: img.size,
-                    shared_size: img.shared_size,
-                    labels: Some(img.labels),
-                    containers: img.containers,
                 })
                 .collect();
 
