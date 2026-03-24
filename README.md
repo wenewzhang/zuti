@@ -218,12 +218,12 @@ Docker pull image
   curl -k -X POST https://192.168.3.248:8443/docker/pull_image/start \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"image_name": "nginx:trixie-perl"}'
+    -d '{"image_name": "postgres:16.13-trixie"}'
 ```
 
 Docker pull image progress
 ```
-  curl -k -X GET https://192.168.3.248:8443/docker/pull_image/task/f1497a6e-ea9b-4a14-878c-192901d21ee0 \
+  curl -k -X GET https://192.168.3.248:8443/docker/pull_image/task/0b319bfc-128d-408c-97b2-2b965e20d7f9 \
     -H "Authorization: Bearer $TOKEN" 
 ```
 
@@ -275,7 +275,7 @@ create container
     -H "Authorization: Bearer $TOKEN"
 ```
   3. DELETE /docker/setting/registry - 删除镜像源
-```s
+```
   curl -k -X DELETE https://192.168.3.248:8443/docker/setting/registry \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -283,6 +283,30 @@ create container
       "prefix": "docker.io",
       "location": "docker.nju.edu.cn"
     }'
+
+```
+
+Mirror
+```
+  curl -k -X POST "${HOST}/docker/setting/mirror" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"location":"hub-mirror.c.163.com"}'
+
+  curl -k -X POST "${HOST}/docker/setting/mirror" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"location":"docker.mirrors.sjtug.sjtu.edu.cn"}'
+
+  # 3. 查看配置
+  curl -k "${HOST}/docker/setting/mirror" \
+    -H "Authorization: Bearer ${TOKEN}"
+
+  # 4. 删除有问题的 mirror（只传 location）
+  curl -k -X DELETE "${HOST}/docker/setting/mirror" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"location":"docker.nju.edu.cn"}'
 
 ```
 
@@ -317,15 +341,12 @@ export  HOST="https://192.168.3.248:8443"
 Podman compose
 ```
   curl -k -X POST https://192.168.3.248:8443/docker/compose_up \
-    -H "Authorization: Bearer  ${TOKEN}" \
+    -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{
-      "content": "services:\n  db:\n    image: postgres:15\n    environment:\n      POSTGRES_PASSWORD: secret\n    volumes:\n      - db_data:/var/lib/postgresql/data\n  web:\n    image: myap
-  p:latest\n    ports:\n      - \"3000:3000\"\n    depends_on:\n      - db\nvolumes:\n  db_data:",
-      "project_name": "myapp",
-      "detached": true,
-      "build": false
-    }'
+    -d '{"content":"services:\n  db:\n    image: postgres:15\n    environment:\n      POSTGRES_PASSWORD: secret\n    volumes:\n      - db_data:/var/lib/postgresql/data\n  web:\n    image: my
+  app:latest\n    ports:\n      - \"3000:3000\"\n    depends_on:\n      - db\nvolumes:\n  db_data:","project_name":"myapp","detached":true,"build":false}'
+
+
 
 
   curl -k https://localhost:8443/docker/compose_list \
