@@ -1,0 +1,418 @@
+use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+use std::process::Command;
+
+use crate::utils::admin::{validate_token_with_db, verify_admin_access};
+use crate::DbPool;
+
+const COMPOSE_DIR: &str = "/.data/zuti/compose";
+
+#[derive(Deserialize, Debug)]
+pub struct ComposeUpRequest {
+    pub content: String,
+    #[serde(default)]
+    pub project_name: Option<String>,
+    #[serde(default = "default_detached")]
+    pub detached: bool,
+    #[serde(default)]
+    pub build: bool,
+}
+
+fn default_detached() -> bool {
+    true
+}
+
+#[derive(Serialize)]
+pub struct ComposeUpResponse {
+    pub success: bool,
+    pub message: String,
+    pub project_name: Option<String>,
+    pub output: Option<String>,
+}
+
+fn ensure_compose_dir() -> Result<(), String> {
+    let path = Path::new(COMPOSE_DIR);
+    if !path.exists() {
+        fs::create_dir_all(path)
+            .map_err(|e| format!("Failed to create compose directory: {}", e))?;
+    }
+    Ok(())
+}
+
+fn generate_project_name() -> String {
+    format!("zuti-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap())
+}
+
+fn write_compose_file(project_name: &str, content: &str) -> Result<std::path::PathBuf, String> {
+    ensure_compose_dir()?;
+    
+    let project_dir = Path::new(COMPOSE_DIR).join(project_name);
+    fs::create_dir_all(&project_dir)
+        .map_err(|e| format!("Failed to create project directory: {}", e))?;
+    
+    let compose_path = project_dir.join("compose.yaml");
+    let mut file = fs::File::create(&compose_path)
+        .map_err(|e| format!("Failed to create compose file: {}", e))?;
+    
+    file.write_all(content.as_bytes())
+        .map_err(|e| format!("Failed to write compose file: {}", e))?;
+    
+    Ok(compose_path)
+}
+
+fn execute_compose_up(
+    project_name: &str,
+    compose_path: &Path,
+    detached: bool,
+    build: bool,
+) -> Result<String, String> {
+    let check_cmd = Command::new("which")
+        .arg("podman-compose")
+        .output()
+        .map_err(|e| format!("Failed to check podman-compose: {}", e))?;
+    
+    if !check_cmd.status.success() {
+        return Err("podman-compose not found. Please install podman-compose first.".to_string());
+    }
+    
+    let mut cmd = Command::new("podman-compose");
+    cmd.arg("-f")
+        .arg(compose_path)
+        .arg("-p")
+        .arg(project_name);
+    
+    if build {
+        cmd.arg("--build");
+    }
+    
+    cmd.arg("up");
+    
+    if detached {
+        cmd.arg("-d");
+    }
+    
+    let output = cmd
+        .current_dir(compose_path.parent().unwrap())
+        .output()
+        .map_err(|e| format!("Failed to execute podman-compose: {}", e))?;
+    
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    
+    let result = if stderr.is_empty() { stdout.to_string() } else { format!("{}", stderr) };
+    
+    if output.status.success() {
+        Ok(result)
+    } else {
+        Err(format!("podman-compose failed: {}", result))
+    }
+}
+
+#[post("/docker/compose_up")]
+pub async fn compose_up(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    body: web::Json<ComposeUpRequest>,
+) -> impl Responder {
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let req_body = body.into_inner();
+    let content = req_body.content.trim();
+    
+    if content.is_empty() {
+        return HttpResponse::BadRequest().json(ComposeUpResponse {
+            success: false,
+            message: "Compose file content is required".to_string(),
+            project_name: None,
+            output: None,
+        });
+    }
+
+    let project_name = req_body.project_name
+        .filter(|n| !n.trim().is_empty())
+        .map(|n| n.trim().to_string())
+        .unwrap_or_else(generate_project_name);
+
+    let compose_path = match write_compose_file(&project_name, content) {
+        Ok(path) => path,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ComposeUpResponse {
+                success: false,
+                message: e,
+                project_name: Some(project_name),
+                output: None,
+            });
+        }
+    };
+
+    match execute_compose_up(&project_name, &compose_path, req_body.detached, req_body.build) {
+        Ok(output) => HttpResponse::Ok().json(ComposeUpResponse {
+            success: true,
+            message: format!("Compose project '{}' started successfully", project_name),
+            project_name: Some(project_name),
+            output: Some(output),
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(ComposeUpResponse {
+            success: false,
+            message: e,
+            project_name: Some(project_name),
+            output: None,
+        }),
+    }
+}
+
+
+// ============================================================================
+// Compose List - List all compose projects
+// ============================================================================
+
+use actix_web::get;
+
+/// Compose project info
+#[derive(Serialize, Debug)]
+pub struct ComposeProject {
+    pub name: String,
+    pub created_at: Option<u64>,
+}
+
+/// Compose list response
+#[derive(Serialize)]
+pub struct ComposeListResponse {
+    pub success: bool,
+    pub message: String,
+    pub projects: Option<Vec<ComposeProject>>,
+}
+
+/// List all compose projects
+///
+/// # Endpoint
+/// GET /docker/compose_list
+///
+/// # Response
+/// ```json
+/// {
+///     "success": true,
+///     "message": "Found 3 project(s)",
+///     "projects": [
+///         {"name": "nginx-demo", "created_at": 1704067200},
+///         {"name": "myapp", "created_at": 1704067300}
+///     ]
+/// }
+/// ```
+#[get("/docker/compose_list")]
+pub async fn compose_list(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+) -> impl Responder {
+    // 1. Verify token (any valid user, not just admin)
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
+    // 2. Read compose directory
+    let compose_dir = Path::new(COMPOSE_DIR);
+    
+    if !compose_dir.exists() {
+        return HttpResponse::Ok().json(ComposeListResponse {
+            success: true,
+            message: "No compose projects found".to_string(),
+            projects: Some(vec![]),
+        });
+    }
+
+    // 3. List all subdirectories (project names)
+    let mut projects = Vec::new();
+    
+    match fs::read_dir(compose_dir) {
+        Ok(entries) => {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            // Get directory modification time as created_at
+                            let created_at = entry.metadata()
+                                .ok()
+                                .and_then(|m| m.modified().ok())
+                                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                .map(|d| d.as_secs());
+                            
+                            projects.push(ComposeProject {
+                                name: name.to_string(),
+                                created_at,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ComposeListResponse {
+                success: false,
+                message: format!("Failed to read compose directory: {}", e),
+                projects: None,
+            });
+        }
+    }
+
+    // Sort by name
+    projects.sort_by(|a, b| a.name.cmp(&b.name));
+
+    HttpResponse::Ok().json(ComposeListResponse {
+        success: true,
+        message: format!("Found {} project(s)", projects.len()),
+        projects: Some(projects),
+    })
+}
+
+
+// ============================================================================
+// Compose Down - Stop and remove compose project
+// ============================================================================
+
+use actix_web::delete;
+
+/// Compose down request
+#[derive(Deserialize, Debug)]
+pub struct ComposeDownRequest {
+    pub project_name: String,
+    /// Remove volumes (default: false)
+    #[serde(default)]
+    pub volumes: bool,
+    /// Remove images (default: false)
+    #[serde(default)]
+    pub remove_images: bool,
+}
+
+/// Compose down response
+#[derive(Serialize)]
+pub struct ComposeDownResponse {
+    pub success: bool,
+    pub message: String,
+    pub output: Option<String>,
+}
+
+/// Execute podman-compose down
+fn execute_compose_down(
+    project_name: &str,
+    compose_path: &Path,
+    volumes: bool,
+    remove_images: bool,
+) -> Result<String, String> {
+    let check_cmd = Command::new("which")
+        .arg("podman-compose")
+        .output()
+        .map_err(|e| format!("Failed to check podman-compose: {}", e))?;
+    
+    if !check_cmd.status.success() {
+        return Err("podman-compose not found. Please install podman-compose first.".to_string());
+    }
+    
+    let mut cmd = Command::new("podman-compose");
+    cmd.arg("-f")
+        .arg(compose_path)
+        .arg("-p")
+        .arg(project_name)
+        .arg("down");
+    
+    if volumes {
+        cmd.arg("-v");
+    }
+    
+    if remove_images {
+        cmd.arg("--rmi").arg("all");
+    }
+    
+    let output = cmd
+        .current_dir(compose_path.parent().unwrap())
+        .output()
+        .map_err(|e| format!("Failed to execute podman-compose down: {}", e))?;
+    
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    
+    let result = if stderr.is_empty() { stdout.to_string() } else { format!("{}", stderr) };
+    
+    if output.status.success() {
+        Ok(result)
+    } else {
+        Err(format!("podman-compose down failed: {}", result))
+    }
+}
+
+/// Stop and remove Docker/Podman Compose project
+///
+/// # Endpoint
+/// DELETE /docker/compose_down
+///
+/// # Request Body
+/// ```json
+/// {
+///     "project_name": "my-project",
+///     "volumes": false,
+///     "remove_images": false
+/// }
+/// ```
+#[delete("/docker/compose_down")]
+pub async fn compose_down(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    body: web::Json<ComposeDownRequest>,
+) -> impl Responder {
+    // 1. Verify admin access
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    // 2. Validate request
+    let req_body = body.into_inner();
+    let project_name = req_body.project_name.trim();
+    
+    if project_name.is_empty() {
+        return HttpResponse::BadRequest().json(ComposeDownResponse {
+            success: false,
+            message: "Project name is required".to_string(),
+            output: None,
+        });
+    }
+
+    // 3. Check if project exists
+    let project_dir = Path::new(COMPOSE_DIR).join(project_name);
+    let compose_path = project_dir.join("compose.yaml");
+    
+    if !compose_path.exists() {
+        return HttpResponse::NotFound().json(ComposeDownResponse {
+            success: false,
+            message: format!("Project '{}' not found", project_name),
+            output: None,
+        });
+    }
+
+    // 4. Execute podman-compose down
+    match execute_compose_down(project_name, &compose_path, req_body.volumes, req_body.remove_images) {
+        Ok(output) => {
+            // 5. Remove project directory after successful down
+            if let Err(e) = fs::remove_dir_all(&project_dir) {
+                log::warn!("Failed to remove project directory: {}", e);
+            }
+            
+            HttpResponse::Ok().json(ComposeDownResponse {
+                success: true,
+                message: format!("Compose project '{}' stopped and removed successfully", project_name),
+                output: Some(output),
+            })
+        }
+        Err(e) => HttpResponse::InternalServerError().json(ComposeDownResponse {
+            success: false,
+            message: e,
+            output: None,
+        }),
+    }
+}

@@ -183,6 +183,9 @@ async fn main() -> std::io::Result<()> {
             .service(apis::docker::set_volume)
             .service(apis::docker::get_volumes)
             .service(apis::docker::delete_volume)
+            .service(apis::docker_compose::compose_up)
+            .service(apis::docker_compose::compose_list)
+            .service(apis::docker_compose::compose_down)
     })
     .bind_openssl(&server_address, builder)?
     .run()

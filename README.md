@@ -313,3 +313,51 @@ Volume setting
   echo "All volumes created!"
 
 ```
+
+Podman compose
+```
+  curl -k -X POST https://192.168.3.248:8443/docker/compose_up \
+    -H "Authorization: Bearer  ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "content": "services:\n  db:\n    image: postgres:15\n    environment:\n      POSTGRES_PASSWORD: secret\n    volumes:\n      - db_data:/var/lib/postgresql/data\n  web:\n    image: myap
+  p:latest\n    ports:\n      - \"3000:3000\"\n    depends_on:\n      - db\nvolumes:\n  db_data:",
+      "project_name": "myapp",
+      "detached": true,
+      "build": false
+    }'
+
+
+  curl -k https://localhost:8443/docker/compose_list \
+    -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+
+  curl -k -X DELETE https://localhost:8443/docker/compose_down \
+    -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "project_name": "nginx-demo"
+    }'
+
+  删除项目及卷
+
+  curl -k -X DELETE https://localhost:8443/docker/compose_down \
+    -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "project_name": "myapp",
+      "volumes": true
+    }'
+
+  删除项目、卷和镜像
+
+  curl -k -X DELETE https://localhost:8443/docker/compose_down \
+    -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "project_name": "myapp",
+      "volumes": true,
+      "remove_images": true
+    }'
+
+```
