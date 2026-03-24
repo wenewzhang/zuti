@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::utils::admin::verify_admin_access;
+use crate::utils::consts::ZUTI_SETTING_FILE;
 use crate::DbPool;
 
 // ============================================================================
@@ -1391,5 +1392,290 @@ pub async fn delete_registry_mirror(
         success: true,
         message: format!("Registry mirror '{} -> {}' deleted successfully", prefix, location),
         mirrors: Some(mirrors),
+    })
+}
+
+
+// ============================================================================
+// Volume Setting Management (Stored in ZUTI_SETTING_FILE)
+// ============================================================================
+
+/// Volume configuration entry
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct VolumeSetting {
+    /// Volume name/identifier
+    pub name: String,
+    /// Host path for the volume
+    pub host_path: String,
+    /// Volume description/notes
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// Volume configuration wrapper for the setting file
+#[derive(Deserialize, Serialize, Debug, Default)]
+pub struct VolumeConfig {
+    #[serde(default)]
+    pub volumes: Vec<VolumeSetting>,
+}
+
+/// Set/Add volume request
+#[derive(Deserialize, Debug)]
+pub struct SetVolumeRequest {
+    pub name: String,
+    pub host_path: String,
+    pub description: Option<String>,
+}
+
+/// Delete volume request
+#[derive(Deserialize, Debug)]
+pub struct DeleteVolumeRequest {
+    pub name: String,
+}
+
+/// Volume response
+#[derive(Serialize)]
+pub struct VolumeResponse {
+    pub success: bool,
+    pub message: String,
+    pub volumes: Option<Vec<VolumeSetting>>,
+}
+
+/// Read volume configuration from ZUTI_SETTING_FILE
+fn read_volume_config() -> Result<VolumeConfig, String> {
+    let path = Path::new(ZUTI_SETTING_FILE);
+    if !path.exists() {
+        return Ok(VolumeConfig::default());
+    }
+
+    let content = fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read volume config: {}", e))?;
+
+    if content.trim().is_empty() {
+        return Ok(VolumeConfig::default());
+    }
+
+    // Parse as JSON, if fails, try to read as TOML
+    match serde_json::from_str::<VolumeConfig>(&content) {
+        Ok(config) => Ok(config),
+        Err(_) => {
+            // Try TOML format
+            toml::from_str::<VolumeConfig>(&content)
+                .map_err(|e| format!("Failed to parse volume config: {}", e))
+        }
+    }
+}
+
+/// Write volume configuration to ZUTI_SETTING_FILE
+fn write_volume_config(config: &VolumeConfig) -> Result<(), String> {
+    let path = Path::new(ZUTI_SETTING_FILE);
+
+    // Create parent directory if not exists
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create config directory: {}", e))?;
+        }
+    }
+
+    // Write as TOML format for better readability
+    let content = toml::to_string_pretty(config)
+        .map_err(|e| format!("Failed to serialize volume config: {}", e))?;
+
+    fs::write(path, content)
+        .map_err(|e| format!("Failed to write volume config: {}", e))
+}
+
+/// Set/Add volume configuration
+///
+/// # Endpoint
+/// POST /docker/setting/volume
+///
+/// # Request Body
+/// ```json
+/// {
+///     "name": "data-volume",
+///     "host_path": "/data/myapp",
+///     "description": "Application data volume"
+/// }
+/// ```
+#[post("/docker/setting/volume")]
+pub async fn set_volume(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    body: web::Json<SetVolumeRequest>,
+) -> impl Responder {
+    // 1. Verify admin access
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    // 2. Validate request
+    let req_body = body.into_inner();
+    let name = req_body.name.trim();
+    let host_path = req_body.host_path.trim();
+
+    if name.is_empty() {
+        return HttpResponse::BadRequest().json(VolumeResponse {
+            success: false,
+            message: "Volume name is required".to_string(),
+            volumes: None,
+        });
+    }
+
+    if host_path.is_empty() {
+        return HttpResponse::BadRequest().json(VolumeResponse {
+            success: false,
+            message: "Host path is required".to_string(),
+            volumes: None,
+        });
+    }
+
+    // 3. Read existing config
+    let mut config = match read_volume_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(VolumeResponse {
+                success: false,
+                message: e,
+                volumes: None,
+            });
+        }
+    };
+
+    // 4. Check if volume with same name exists, update or add
+    let existing_index = config.volumes.iter().position(|v| v.name == name);
+
+    let new_volume = VolumeSetting {
+        name: name.to_string(),
+        host_path: host_path.to_string(),
+        description: req_body.description,
+    };
+
+    let message = if let Some(index) = existing_index {
+        config.volumes[index] = new_volume;
+        format!("Volume '{}' updated successfully", name)
+    } else {
+        config.volumes.push(new_volume);
+        format!("Volume '{}' added successfully", name)
+    };
+
+    // 5. Write config
+    if let Err(e) = write_volume_config(&config) {
+        return HttpResponse::InternalServerError().json(VolumeResponse {
+            success: false,
+            message: e,
+            volumes: None,
+        });
+    }
+
+    HttpResponse::Ok().json(VolumeResponse {
+        success: true,
+        message,
+        volumes: Some(config.volumes),
+    })
+}
+
+/// Get all volume configurations
+///
+/// # Endpoint
+/// GET /docker/setting/volume
+#[get("/docker/setting/volume")]
+pub async fn get_volumes(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+) -> impl Responder {
+    // 1. Verify admin access
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    // 2. Read config
+    match read_volume_config() {
+        Ok(config) => {
+            let count = config.volumes.len();
+            HttpResponse::Ok().json(VolumeResponse {
+                success: true,
+                message: format!("Found {} volume(s)", count),
+                volumes: Some(config.volumes),
+            })
+        }
+        Err(e) => HttpResponse::InternalServerError().json(VolumeResponse {
+            success: false,
+            message: e,
+            volumes: None,
+        }),
+    }
+}
+
+/// Delete volume configuration
+///
+/// # Endpoint
+/// DELETE /docker/setting/volume/{name}
+///
+/// # Path Parameters
+/// - `name`: Volume name to delete
+#[delete("/docker/setting/volume/{name}")]
+pub async fn delete_volume(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    path: web::Path<String>,
+) -> impl Responder {
+    // 1. Verify admin access
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    // 2. Get volume name
+    let name = path.into_inner().trim().to_string();
+
+    if name.is_empty() {
+        return HttpResponse::BadRequest().json(VolumeResponse {
+            success: false,
+            message: "Volume name is required".to_string(),
+            volumes: None,
+        });
+    }
+
+    // 3. Read existing config
+    let mut config = match read_volume_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(VolumeResponse {
+                success: false,
+                message: e,
+                volumes: None,
+            });
+        }
+    };
+
+    // 4. Find and remove volume
+    let original_len = config.volumes.len();
+    config.volumes.retain(|v| v.name != name);
+
+    if config.volumes.len() == original_len {
+        return HttpResponse::NotFound().json(VolumeResponse {
+            success: false,
+            message: format!("Volume '{}' not found", name),
+            volumes: None,
+        });
+    }
+
+    // 5. Write config
+    if let Err(e) = write_volume_config(&config) {
+        return HttpResponse::InternalServerError().json(VolumeResponse {
+            success: false,
+            message: e,
+            volumes: None,
+        });
+    }
+
+    HttpResponse::Ok().json(VolumeResponse {
+        success: true,
+        message: format!("Volume '{}' deleted successfully", name),
+        volumes: Some(config.volumes),
     })
 }

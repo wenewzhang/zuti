@@ -50,3 +50,5 @@ pub const USER_TYPE_READ: &str = "read";
 pub const USER_TYPE_SHARE: &str = "share";
 /// 用户类型 - 管理员
 pub const USER_TYPE_ADMIN: &str = "admin";
+
+pub const ZUTI_SETTING_FILE: &str = "/.data/zuti/zuti.conf";
