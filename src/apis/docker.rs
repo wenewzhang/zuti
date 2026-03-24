@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::utils::admin::verify_admin_access;
-use crate::utils::consts::ZUTI_SETTING_FILE;
+use crate::utils::consts::{FORBID_DIRECTORY, ZUTI_SETTING_FILE};
 use crate::DbPool;
 
 // ============================================================================
@@ -749,7 +749,24 @@ pub async fn create_container(
         });
     }
 
-    // 3. Connect to Docker
+    // 3. Validate volume host paths against forbidden directories
+    if let Some(volumes) = &req_body.volumes {
+        for vol in volumes {
+            if let Some(forbidden) = is_forbidden_path(&vol.host_path) {
+                return HttpResponse::BadRequest().json(CreateContainerResponse {
+                    success: false,
+                    message: format!(
+                        "Host path '{}' in volume is not allowed: it conflicts with forbidden directory '{}'",
+                        vol.host_path, forbidden
+                    ),
+                    container_id: None,
+                    warnings: None,
+                });
+            }
+        }
+    }
+
+    // 4. Connect to Docker
     let docker = match Docker::connect_with_local_defaults() {
         Ok(d) => d,
         Err(e) => {
@@ -762,7 +779,7 @@ pub async fn create_container(
         }
     };
 
-    // 4. Check if image exists locally
+    // 5. Check if image exists locally
     let image_name = req_body.image.trim().to_string();
     let image_exists = match docker.list_images(Some(ListImagesOptions {
         all: true,
@@ -785,7 +802,7 @@ pub async fn create_container(
         });
     }
 
-    // 5. Build container configuration
+    // 6. Build container configuration
     let cmd = req_body.cmd.clone();
     
     // Set environment variables
@@ -884,7 +901,7 @@ pub async fn create_container(
         ..Default::default()
     };
 
-    // 6. Create container
+    // 7. Create container
     let options = CreateContainerOptions {
         name: req_body.name.clone(),
         ..Default::default()
@@ -894,7 +911,7 @@ pub async fn create_container(
         Ok(ContainerCreateResponse { id, warnings }) => {
             let short_id = format_short_id(&id);
             
-            // 7. Auto start container if requested
+            // 8. Auto start container if requested
             if req_body.auto_start {
                 match docker.start_container(&id, None).await {
                     Ok(_) => {
@@ -1466,8 +1483,35 @@ fn read_volume_config() -> Result<VolumeConfig, String> {
     }
 }
 
+/// Check if host_path is in forbidden directory list
+fn is_forbidden_path(host_path: &str) -> Option<&'static str> {
+    let normalized_path = if host_path.ends_with('/') {
+        &host_path[..host_path.len()-1]
+    } else {
+        host_path
+    };
+    
+    for &forbidden in FORBID_DIRECTORY {
+        // Check if path is exactly the forbidden directory or is a subdirectory
+        if normalized_path == forbidden || normalized_path.starts_with(&format!("{}/", forbidden)) {
+            return Some(forbidden);
+        }
+    }
+    None
+}
+
 /// Write volume configuration to ZUTI_SETTING_FILE
 fn write_volume_config(config: &VolumeConfig) -> Result<(), String> {
+    // Validate all host paths against forbidden directories
+    for volume in &config.volumes {
+        if let Some(forbidden) = is_forbidden_path(&volume.host_path) {
+            return Err(format!(
+                "Host path '{}' is not allowed: it conflicts with forbidden directory '{}'",
+                volume.host_path, forbidden
+            ));
+        }
+    }
+
     let path = Path::new(ZUTI_SETTING_FILE);
 
     // Create parent directory if not exists

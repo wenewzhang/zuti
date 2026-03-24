@@ -255,7 +255,7 @@ create container
 
 ```
 
-## Register setting
+## Registry setting
   1. POST /docker/setting/registry - 添加/更新镜像源
 
   请求：
@@ -283,5 +283,33 @@ create container
       "prefix": "docker.io",
       "location": "docker.nju.edu.cn"
     }'
+
+```
+
+
+Volume setting
+```
+  TOKEN="YOUR_JWT_TOKEN"
+  HOST="https://localhost:8443"
+
+  # 添加数据卷
+  curl -k -X POST "${HOST}/docker/setting/volume" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"name": "data", "host_path": "/data", "description": "Data storage"}'
+
+  # 添加配置卷
+  curl -k -X POST "${HOST}/docker/setting/volume" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"name": "config", "host_path": "/etc/myapp", "description": "Config files"}'
+
+  # 添加日志卷
+  curl -k -X POST "${HOST}/docker/setting/volume" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"name": "logs", "host_path": "/var/log/myapp", "description": "Log files"}'
+
+  echo "All volumes created!"
 
 ```
