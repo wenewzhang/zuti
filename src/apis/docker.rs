@@ -1,6 +1,7 @@
 use actix_web::{delete, get, post, web, HttpRequest, HttpResponse, Responder};
 use bollard::Docker;
-use bollard::query_parameters::{CreateImageOptions, ListImagesOptions, RemoveImageOptions};
+use bollard::models::{ContainerCreateResponse, HostConfig, PortBinding, Mount, MountTypeEnum, ContainerCreateBody};
+use bollard::query_parameters::{CreateContainerOptions, CreateImageOptions, ListImagesOptions, RemoveImageOptions};
 use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -593,4 +594,344 @@ fn calculate_overall_progress(task: &PullTask) -> u8 {
     // Calculate percentage (5-100 range)
     let progress = (accumulated_weight / total_weight * 95.0) as u8 + 5;
     progress.min(100)
+}
+
+// ============================================================================
+// Create Container Related Structures
+// ============================================================================
+
+/// Port mapping configuration
+#[derive(Deserialize, Debug)]
+pub struct PortMapping {
+    /// Host port (e.g., "8080")
+    pub host_port: String,
+    /// Container port (e.g., "80/tcp")
+    pub container_port: String,
+}
+
+/// Volume mount configuration
+#[derive(Deserialize, Debug)]
+pub struct VolumeMount {
+    /// Host path (e.g., "/data/myapp")
+    pub host_path: String,
+    /// Container path (e.g., "/app/data")
+    pub container_path: String,
+    /// Read-only mount
+    #[serde(default)]
+    pub read_only: bool,
+}
+
+/// Create Container Request
+/// 
+/// # Fields
+/// - `image`: Docker image name (e.g., "nginx:latest", "ubuntu:22.04")
+/// - `name`: Optional container name
+/// - `cmd`: Optional command to run (e.g., ["echo", "hello"])
+/// - `env`: Optional environment variables (e.g., {"KEY": "value"})
+/// - `ports`: Optional port mappings (host_port -> container_port)
+/// - `volumes`: Optional volume mounts
+/// - `restart_policy`: Optional restart policy ("no", "always", "unless-stopped", "on-failure")
+/// - `auto_start`: Whether to start the container immediately (default: true)
+#[derive(Deserialize, Debug)]
+pub struct CreateContainerRequest {
+    /// Docker image name (required)
+    pub image: String,
+    /// Container name (optional, auto-generated if not provided)
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Command to run (optional)
+    #[serde(default)]
+    pub cmd: Option<Vec<String>>,
+    /// Environment variables (optional)
+    #[serde(default)]
+    pub env: Option<HashMap<String, String>>,
+    /// Port mappings (optional)
+    #[serde(default)]
+    pub ports: Option<Vec<PortMapping>>,
+    /// Volume mounts (optional)
+    #[serde(default)]
+    pub volumes: Option<Vec<VolumeMount>>,
+    /// Restart policy: "no", "always", "unless-stopped", "on-failure" (default: "no")
+    #[serde(default = "default_restart_policy")]
+    pub restart_policy: String,
+    /// Auto start container after creation (default: true)
+    #[serde(default = "default_auto_start")]
+    pub auto_start: bool,
+}
+
+fn default_restart_policy() -> String {
+    "no".to_string()
+}
+
+fn default_auto_start() -> bool {
+    true
+}
+
+/// Create Container Response
+#[derive(Serialize)]
+pub struct CreateContainerResponse {
+    pub success: bool,
+    pub message: String,
+    pub container_id: Option<String>,
+    pub warnings: Option<Vec<String>>,
+}
+
+/// Validate restart policy
+fn validate_restart_policy(policy: &str) -> Result<(), String> {
+    match policy {
+        "no" | "always" | "unless-stopped" | "on-failure" => Ok(()),
+        _ => Err(format!("Invalid restart policy: {}. Valid values: no, always, unless-stopped, on-failure", policy)),
+    }
+}
+
+/// Create Docker Container (Admin Only)
+///
+/// # Endpoint
+/// POST /docker/create_container
+///
+/// # Request Body Example
+/// ```json
+/// {
+///     "image": "nginx:latest",
+///     "name": "my-nginx",
+///     "cmd": null,
+///     "env": {"NGINX_HOST": "example.com"},
+///     "ports": [{"host_port": "8080", "container_port": "80/tcp"}],
+///     "volumes": [{"host_path": "/data/nginx", "container_path": "/usr/share/nginx/html", "read_only": false}],
+///     "restart_policy": "always",
+///     "auto_start": true
+/// }
+/// ```
+///
+/// # Response
+/// ```json
+/// {
+///     "success": true,
+///     "message": "Container created successfully",
+///     "container_id": "abc123...",
+///     "warnings": []
+/// }
+/// ```
+#[post("/docker/create_container")]
+pub async fn create_container(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    body: web::Json<CreateContainerRequest>,
+) -> impl Responder {
+    // 1. Verify admin access
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    // 2. Validate request
+    let req_body = body.into_inner();
+    
+    if req_body.image.trim().is_empty() {
+        return HttpResponse::BadRequest().json(CreateContainerResponse {
+            success: false,
+            message: "Image name is required".to_string(),
+            container_id: None,
+            warnings: None,
+        });
+    }
+
+    if let Err(e) = validate_restart_policy(&req_body.restart_policy) {
+        return HttpResponse::BadRequest().json(CreateContainerResponse {
+            success: false,
+            message: e,
+            container_id: None,
+            warnings: None,
+        });
+    }
+
+    // 3. Connect to Docker
+    let docker = match Docker::connect_with_local_defaults() {
+        Ok(d) => d,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(CreateContainerResponse {
+                success: false,
+                message: format!("Failed to connect to Docker: {}", e),
+                container_id: None,
+                warnings: None,
+            });
+        }
+    };
+
+    // 4. Check if image exists locally
+    let image_name = req_body.image.trim().to_string();
+    let image_exists = match docker.list_images(Some(ListImagesOptions {
+        all: true,
+        ..Default::default()
+    })).await {
+        Ok(images) => images.iter().any(|img| {
+            img.repo_tags.iter().any(|tag| {
+                tag == &image_name || tag.starts_with(&format!("{}:", image_name))
+            })
+        }),
+        Err(_) => false,
+    };
+
+    if !image_exists {
+        return HttpResponse::BadRequest().json(CreateContainerResponse {
+            success: false,
+            message: format!("Image '{}' not found locally. Please pull the image first using /docker/pull_image/start", image_name),
+            container_id: None,
+            warnings: None,
+        });
+    }
+
+    // 5. Build container configuration
+    let cmd = req_body.cmd.clone();
+    
+    // Set environment variables
+    let env: Option<Vec<String>> = req_body.env.as_ref().map(|env_map| {
+        env_map
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect()
+    });
+
+    // Build port bindings and exposed ports
+    let mut port_bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
+    let mut exposed_ports: Option<Vec<String>> = None;
+
+    if let Some(ports) = &req_body.ports {
+        let mut exposed = Vec::new();
+        for port_mapping in ports {
+            let container_port = &port_mapping.container_port;
+            let host_port = &port_mapping.host_port;
+
+            port_bindings.insert(
+                container_port.clone(),
+                Some(vec![PortBinding {
+                    host_ip: Some("0.0.0.0".to_string()),
+                    host_port: Some(host_port.clone()),
+                }]),
+            );
+            exposed.push(container_port.clone());
+        }
+        if !exposed.is_empty() {
+            exposed_ports = Some(exposed);
+        }
+    }
+
+    // Build mounts
+    let mounts: Option<Vec<Mount>> = req_body.volumes.as_ref().map(|volumes| {
+        volumes
+            .iter()
+            .map(|vol| Mount {
+                target: Some(vol.container_path.clone()),
+                source: Some(vol.host_path.clone()),
+                typ: Some(MountTypeEnum::BIND),
+                read_only: Some(vol.read_only),
+                ..Default::default()
+            })
+            .collect()
+    });
+
+    // Build host config
+    let mut host_config = HostConfig {
+        port_bindings: if port_bindings.is_empty() {
+            None
+        } else {
+            Some(port_bindings)
+        },
+        mounts,
+        ..Default::default()
+    };
+
+    // Set restart policy
+    match req_body.restart_policy.as_str() {
+        "always" => {
+            host_config.restart_policy = Some(bollard::models::RestartPolicy {
+                name: Some(bollard::models::RestartPolicyNameEnum::ALWAYS),
+                maximum_retry_count: None,
+            });
+        }
+        "unless-stopped" => {
+            host_config.restart_policy = Some(bollard::models::RestartPolicy {
+                name: Some(bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED),
+                maximum_retry_count: None,
+            });
+        }
+        "on-failure" => {
+            host_config.restart_policy = Some(bollard::models::RestartPolicy {
+                name: Some(bollard::models::RestartPolicyNameEnum::ON_FAILURE),
+                maximum_retry_count: Some(5),
+            });
+        }
+        _ => {
+            // "no" - no restart policy
+            host_config.restart_policy = Some(bollard::models::RestartPolicy {
+                name: Some(bollard::models::RestartPolicyNameEnum::EMPTY),
+                maximum_retry_count: None,
+            });
+        }
+    }
+
+    // Build container create body
+    let config = ContainerCreateBody {
+        image: Some(image_name.clone()),
+        cmd,
+        env,
+        exposed_ports,
+        host_config: Some(host_config),
+        ..Default::default()
+    };
+
+    // 6. Create container
+    let options = CreateContainerOptions {
+        name: req_body.name.clone(),
+        ..Default::default()
+    };
+
+    match docker.create_container(Some(options), config).await {
+        Ok(ContainerCreateResponse { id, warnings }) => {
+            let short_id = format_short_id(&id);
+            
+            // 7. Auto start container if requested
+            if req_body.auto_start {
+                match docker.start_container(&id, None).await {
+                    Ok(_) => {
+                        HttpResponse::Ok().json(CreateContainerResponse {
+                            success: true,
+                            message: format!("Container '{}' created and started successfully", short_id),
+                            container_id: Some(id),
+                            warnings: if warnings.is_empty() { None } else { Some(warnings) },
+                        })
+                    }
+                    Err(e) => {
+                        // Container created but failed to start
+                        HttpResponse::Ok().json(CreateContainerResponse {
+                            success: true,
+                            message: format!(
+                                "Container '{}' created successfully but failed to start: {}. Start manually with: docker start {}",
+                                short_id, e, short_id
+                            ),
+                            container_id: Some(id),
+                            warnings: if warnings.is_empty() { 
+                                Some(vec![format!("Failed to start: {}", e)]) 
+                            } else { 
+                                Some([warnings, vec![format!("Failed to start: {}", e)]].concat()) 
+                            },
+                        })
+                    }
+                }
+            } else {
+                HttpResponse::Ok().json(CreateContainerResponse {
+                    success: true,
+                    message: format!("Container '{}' created successfully (not started)", short_id),
+                    container_id: Some(id),
+                    warnings: if warnings.is_empty() { None } else { Some(warnings) },
+                })
+            }
+        }
+        Err(e) => HttpResponse::InternalServerError().json(CreateContainerResponse {
+            success: false,
+            message: format!("Failed to create container: {}", e),
+            container_id: None,
+            warnings: None,
+        }),
+    }
 }

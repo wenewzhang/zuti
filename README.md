@@ -232,3 +232,25 @@ delete image by id
   curl -k -X DELETE https://192.168.3.248:8443/docker/delete_image/1a1e63136420 \
     -H "Authorization: Bearer $TOKEN" 
 ```
+
+
+create container
+```
+  curl -k -X POST https://192.168.3.248:8443/docker/create_container \
+    -H "Authorization: Bearer <jwt_token>" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "image": "nginx:latest",
+      "name": "my-nginx",
+      "env": {"NGINX_HOST": "example.com"},
+      "ports": [
+        {"host_port": "8080", "container_port": "80/tcp"}
+      ],
+      "volumes": [
+        {"host_path": "/data/nginx", "container_path": "/usr/share/nginx/html", "read_only": false}
+      ],
+      "restart_policy": "always",
+      "auto_start": true
+    }'
+
+```
