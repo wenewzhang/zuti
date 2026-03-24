@@ -5,6 +5,9 @@ use bollard::query_parameters::{CreateContainerOptions, CreateImageOptions, List
 use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
+use std::io::Write;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -934,4 +937,459 @@ pub async fn create_container(
             warnings: None,
         }),
     }
+}
+
+// ============================================================================
+// Registry Mirror Management
+// ============================================================================
+
+const REGISTRY_CONF_PATH: &str = "/etc/containers/registries.conf";
+const REGISTRY_CONF_BACKUP_PATH: &str = "/etc/containers/registries.conf.bak";
+
+/// Registry mirror configuration entry
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct RegistryMirrorEntry {
+    /// Registry prefix to match (e.g., "docker.io")
+    pub prefix: String,
+    /// Mirror location (e.g., "docker.nju.edu.cn")
+    pub location: String,
+    /// Whether to allow insecure (http) connection
+    #[serde(default)]
+    pub insecure: bool,
+}
+
+/// Add/Update registry mirror request
+#[derive(Deserialize, Debug)]
+pub struct SetRegistryRequest {
+    /// Registry prefix (e.g., "docker.io", "docker.io/library")
+    pub prefix: String,
+    /// Mirror location (e.g., "docker.nju.edu.cn", "hub-mirror.c.163.com")
+    pub location: String,
+    /// Allow insecure http connection
+    #[serde(default)]
+    pub insecure: bool,
+}
+
+/// Registry mirror response
+#[derive(Serialize)]
+pub struct RegistryResponse {
+    pub success: bool,
+    pub message: String,
+    pub mirrors: Option<Vec<RegistryMirrorEntry>>,
+}
+
+/// Read existing registry configuration
+fn read_registry_config() -> Result<String, String> {
+    if Path::new(REGISTRY_CONF_PATH).exists() {
+        fs::read_to_string(REGISTRY_CONF_PATH)
+            .map_err(|e| format!("Failed to read registry config: {}", e))
+    } else {
+        Ok(String::new())
+    }
+}
+
+/// Parse registry config and extract mirror entries
+fn parse_registry_mirrors(content: &str) -> Vec<RegistryMirrorEntry> {
+    let mut mirrors = Vec::new();
+    let mut current_prefix = String::new();
+    let mut current_location = String::new();
+    let mut current_insecure = false;
+    let mut in_registry_block = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        
+        // Check for [[registry]] block start
+        if trimmed == "[[registry]]" {
+            // Save previous entry if exists
+            if !current_prefix.is_empty() && !current_location.is_empty() {
+                mirrors.push(RegistryMirrorEntry {
+                    prefix: current_prefix.clone(),
+                    location: current_location.clone(),
+                    insecure: current_insecure,
+                });
+            }
+            // Reset for new block
+            current_prefix.clear();
+            current_location.clear();
+            current_insecure = false;
+            in_registry_block = true;
+        }
+        // Check for [[registry.mirror]] block
+        else if trimmed == "[[registry.mirror]]" {
+            // Save primary registry entry if exists
+            if !current_prefix.is_empty() && !current_location.is_empty() {
+                mirrors.push(RegistryMirrorEntry {
+                    prefix: current_prefix.clone(),
+                    location: current_location.clone(),
+                    insecure: current_insecure,
+                });
+            }
+            // Clear location for mirror (keep prefix)
+            current_location.clear();
+            current_insecure = false;
+        }
+        // Parse prefix
+        else if trimmed.starts_with("prefix") && in_registry_block {
+            if let Some(value) = trimmed.split('=').nth(1) {
+                current_prefix = value.trim().trim_matches('"').to_string();
+            }
+        }
+        // Parse location
+        else if trimmed.starts_with("location") && in_registry_block {
+            if let Some(value) = trimmed.split('=').nth(1) {
+                current_location = value.trim().trim_matches('"').to_string();
+            }
+        }
+        // Parse insecure
+        else if trimmed.starts_with("insecure") && in_registry_block {
+            if let Some(value) = trimmed.split('=').nth(1) {
+                current_insecure = value.trim().parse::<bool>().unwrap_or(false);
+            }
+        }
+    }
+
+    // Save last entry
+    if !current_prefix.is_empty() && !current_location.is_empty() {
+        mirrors.push(RegistryMirrorEntry {
+            prefix: current_prefix,
+            location: current_location,
+            insecure: current_insecure,
+        });
+    }
+
+    mirrors
+}
+
+/// Generate registry configuration content
+fn generate_registry_config(mirrors: &[RegistryMirrorEntry]) -> String {
+    let mut content = String::new();
+    
+    // Add header comment
+    content.push_str("# Podman Registry Configuration\n");
+    content.push_str("# Generated by zuti\n\n");
+    
+    // Collect all unique prefixes
+    let mut prefix_map: HashMap<String, Vec<&RegistryMirrorEntry>> = HashMap::new();
+    for mirror in mirrors {
+        prefix_map.entry(mirror.prefix.clone())
+            .or_default()
+            .push(mirror);
+    }
+
+    // Add unqualified-search-registries
+    let search_registries: Vec<String> = prefix_map.keys()
+        .filter(|k| k == &"docker.io" || k == &"quay.io" || k == &"ghcr.io" || k == &"gcr.io")
+        .cloned()
+        .collect();
+    
+    if !search_registries.is_empty() {
+        content.push_str("unqualified-search-registries = [");
+        let reg_list: Vec<String> = search_registries.iter()
+            .map(|r| format!("\"{}\"", r))
+            .collect();
+        content.push_str(&reg_list.join(", "));
+        content.push_str("]\n\n");
+    }
+
+    // Generate registry blocks
+    for (prefix, entries) in prefix_map {
+        if let Some(first) = entries.first() {
+            content.push_str("[[registry]]\n");
+            content.push_str(&format!("prefix = \"{}\"\n", prefix));
+            content.push_str(&format!("location = \"{}\"\n", first.location));
+            if first.insecure {
+                content.push_str("insecure = true\n");
+            }
+            content.push('\n');
+
+            // Add mirrors
+            for entry in entries.iter().skip(1) {
+                content.push_str("[[registry.mirror]]\n");
+                content.push_str(&format!("location = \"{}\"\n", entry.location));
+                if entry.insecure {
+                    content.push_str("insecure = true\n");
+                }
+                content.push('\n');
+            }
+        }
+    }
+
+    content
+}
+
+/// Add or update registry mirror
+/// 
+/// # Endpoint
+/// POST /docker/setting/registry
+///
+/// # Request Body
+/// ```json
+/// {
+///     "prefix": "docker.io",
+///     "location": "docker.nju.edu.cn",
+///     "insecure": false
+/// }
+/// ```
+#[post("/docker/setting/registry")]
+pub async fn set_registry_mirror(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    body: web::Json<SetRegistryRequest>,
+) -> impl Responder {
+    // 1. Verify admin access
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    // 2. Validate request
+    let req_body = body.into_inner();
+    let prefix = req_body.prefix.trim();
+    let location = req_body.location.trim();
+
+    if prefix.is_empty() {
+        return HttpResponse::BadRequest().json(RegistryResponse {
+            success: false,
+            message: "Prefix is required".to_string(),
+            mirrors: None,
+        });
+    }
+
+    if location.is_empty() {
+        return HttpResponse::BadRequest().json(RegistryResponse {
+            success: false,
+            message: "Location is required".to_string(),
+            mirrors: None,
+        });
+    }
+
+    // 3. Ensure /etc/containers directory exists
+    let conf_dir = Path::new("/etc/containers");
+    if !conf_dir.exists() {
+        match fs::create_dir_all(conf_dir) {
+            Ok(_) => {},
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(RegistryResponse {
+                    success: false,
+                    message: format!("Failed to create /etc/containers directory: {}", e),
+                    mirrors: None,
+                });
+            }
+        }
+    }
+
+    // 4. Backup existing config if exists
+    if Path::new(REGISTRY_CONF_PATH).exists() {
+        if let Err(e) = fs::copy(REGISTRY_CONF_PATH, REGISTRY_CONF_BACKUP_PATH) {
+            return HttpResponse::InternalServerError().json(RegistryResponse {
+                success: false,
+                message: format!("Failed to backup registry config: {}", e),
+                mirrors: None,
+            });
+        }
+    }
+
+    // 5. Read existing mirrors
+    let existing_content = match read_registry_config() {
+        Ok(content) => content,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(RegistryResponse {
+                success: false,
+                message: e,
+                mirrors: None,
+            });
+        }
+    };
+
+    let mut mirrors = parse_registry_mirrors(&existing_content);
+
+    // 6. Check if this exact prefix+location already exists
+    let existing_index = mirrors.iter().position(|m| {
+        m.prefix == prefix && m.location == location
+    });
+
+    if let Some(index) = existing_index {
+        // Update existing entry
+        mirrors[index].insecure = req_body.insecure;
+    } else {
+        // Add new entry
+        mirrors.push(RegistryMirrorEntry {
+            prefix: prefix.to_string(),
+            location: location.to_string(),
+            insecure: req_body.insecure,
+        });
+    }
+
+    // 7. Generate new config content
+    let new_content = generate_registry_config(&mirrors);
+
+    // 8. Write to file
+    let mut file = match fs::File::create(REGISTRY_CONF_PATH) {
+        Ok(f) => f,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(RegistryResponse {
+                success: false,
+                message: format!("Failed to create registry config file: {}", e),
+                mirrors: None,
+            });
+        }
+    };
+
+    if let Err(e) = file.write_all(new_content.as_bytes()) {
+        return HttpResponse::InternalServerError().json(RegistryResponse {
+            success: false,
+            message: format!("Failed to write registry config: {}", e),
+            mirrors: None,
+        });
+    }
+
+    HttpResponse::Ok().json(RegistryResponse {
+        success: true,
+        message: format!("Registry mirror '{}' -> '{}' configured successfully", prefix, location),
+        mirrors: Some(mirrors),
+    })
+}
+
+/// Get all registry mirrors
+///
+/// # Endpoint
+/// GET /docker/setting/registry
+#[get("/docker/setting/registry")]
+pub async fn get_registry_mirrors(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+) -> impl Responder {
+    // 1. Verify admin access
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    // 2. Read config
+    let content = match read_registry_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(RegistryResponse {
+                success: false,
+                message: e,
+                mirrors: None,
+            });
+        }
+    };
+
+    if content.is_empty() {
+        return HttpResponse::Ok().json(RegistryResponse {
+            success: true,
+            message: "No registry mirrors configured".to_string(),
+            mirrors: Some(vec![]),
+        });
+    }
+
+    let mirrors = parse_registry_mirrors(&content);
+
+    HttpResponse::Ok().json(RegistryResponse {
+        success: true,
+        message: format!("Found {} registry mirror(s)", mirrors.len()),
+        mirrors: Some(mirrors),
+    })
+}
+
+/// Delete registry mirror
+///
+/// # Endpoint
+/// DELETE /docker/setting/registry
+///
+/// # Request Body
+/// ```json
+/// {
+///     "prefix": "docker.io",
+///     "location": "docker.nju.edu.cn"
+/// }
+/// ```
+#[delete("/docker/setting/registry")]
+pub async fn delete_registry_mirror(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    body: web::Json<SetRegistryRequest>,
+) -> impl Responder {
+    // 1. Verify admin access
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    // 2. Validate request
+    let req_body = body.into_inner();
+    let prefix = req_body.prefix.trim();
+    let location = req_body.location.trim();
+
+    if prefix.is_empty() || location.is_empty() {
+        return HttpResponse::BadRequest().json(RegistryResponse {
+            success: false,
+            message: "Both prefix and location are required".to_string(),
+            mirrors: None,
+        });
+    }
+
+    // 3. Read existing mirrors
+    let existing_content = match read_registry_config() {
+        Ok(c) => c,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(RegistryResponse {
+                success: false,
+                message: e,
+                mirrors: None,
+            });
+        }
+    };
+
+    let mut mirrors = parse_registry_mirrors(&existing_content);
+    let original_len = mirrors.len();
+
+    // 4. Remove matching entry
+    mirrors.retain(|m| !(m.prefix == prefix && m.location == location));
+
+    if mirrors.len() == original_len {
+        return HttpResponse::NotFound().json(RegistryResponse {
+            success: false,
+            message: format!("Registry mirror '{} -> {}' not found", prefix, location),
+            mirrors: None,
+        });
+    }
+
+    // 5. Backup and write new config
+    if let Err(e) = fs::copy(REGISTRY_CONF_PATH, REGISTRY_CONF_BACKUP_PATH) {
+        return HttpResponse::InternalServerError().json(RegistryResponse {
+            success: false,
+            message: format!("Failed to backup registry config: {}", e),
+            mirrors: None,
+        });
+    }
+
+    let new_content = generate_registry_config(&mirrors);
+    let mut file = match fs::File::create(REGISTRY_CONF_PATH) {
+        Ok(f) => f,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(RegistryResponse {
+                success: false,
+                message: format!("Failed to create registry config file: {}", e),
+                mirrors: None,
+            });
+        }
+    };
+
+    if let Err(e) = file.write_all(new_content.as_bytes()) {
+        return HttpResponse::InternalServerError().json(RegistryResponse {
+            success: false,
+            message: format!("Failed to write registry config: {}", e),
+            mirrors: None,
+        });
+    }
+
+    HttpResponse::Ok().json(RegistryResponse {
+        success: true,
+        message: format!("Registry mirror '{} -> {}' deleted successfully", prefix, location),
+        mirrors: Some(mirrors),
+    })
 }

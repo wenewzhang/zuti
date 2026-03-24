@@ -218,7 +218,7 @@ Docker pull image
   curl -k -X POST https://192.168.3.248:8443/docker/pull_image/start \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"image_name": "golang:tip-trixie"}'
+    -d '{"image_name": "nginx:trixie-perl"}'
 ```
 
 Docker pull image progress
@@ -237,10 +237,10 @@ delete image by id
 create container
 ```
   curl -k -X POST https://192.168.3.248:8443/docker/create_container \
-    -H "Authorization: Bearer <jwt_token>" \
+    -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
-      "image": "nginx:latest",
+      "image": "docker.io/library/nginx:trixie-perl",
       "name": "my-nginx",
       "env": {"NGINX_HOST": "example.com"},
       "ports": [
@@ -251,6 +251,37 @@ create container
       ],
       "restart_policy": "always",
       "auto_start": true
+    }'
+
+```
+
+## Register setting
+  1. POST /docker/setting/registry - 添加/更新镜像源
+
+  请求：
+```
+  curl -k -X POST https://192.168.3.248:8443/docker/setting/registry \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "prefix": "docker.io",
+      "location": "docker.nju.edu.cn",
+      "insecure": false
+    }'
+```
+  2. GET /docker/setting/registry - 获取所有镜像源
+```
+  curl -k https://192.168.3.248:8443/docker/setting/registry \
+    -H "Authorization: Bearer $TOKEN"
+```
+  3. DELETE /docker/setting/registry - 删除镜像源
+```s
+  curl -k -X DELETE https://192.168.3.248:8443/docker/setting/registry \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "prefix": "docker.io",
+      "location": "docker.nju.edu.cn"
     }'
 
 ```

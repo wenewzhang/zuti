@@ -177,6 +177,9 @@ async fn main() -> std::io::Result<()> {
             .service(apis::docker::get_pull_task)
             .service(apis::docker::list_pull_tasks)
             .service(apis::docker::create_container)
+            .service(apis::docker::set_registry_mirror)
+            .service(apis::docker::get_registry_mirrors)
+            .service(apis::docker::delete_registry_mirror)
     })
     .bind_openssl(&server_address, builder)?
     .run()
