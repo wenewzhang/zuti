@@ -1,11 +1,14 @@
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
+use serde_yaml::Value;
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
 use crate::utils::admin::{validate_token_with_db, verify_admin_access};
+use crate::utils::consts::FORBID_DIRECTORY;
 use crate::DbPool;
 
 const COMPOSE_DIR: &str = "/.data/zuti/compose";
@@ -46,20 +49,82 @@ fn generate_project_name() -> String {
     format!("zuti-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap())
 }
 
+/// Extract and validate host paths from volumes in compose YAML
+fn validate_volumes(content: &str) -> Result<(), String> {
+    let yaml: Value = serde_yaml::from_str(content)
+        .map_err(|e| format!("Invalid YAML format: {}", e))?;
+
+    // Get services section
+    let services = yaml.get("services")
+        .and_then(|v| v.as_mapping())
+        .ok_or_else(|| "Missing or invalid 'services' section in YAML".to_string())?;
+
+    for (service_name, service_config) in services {
+        let service_name = service_name.as_str().unwrap_or("unknown");
+
+        // Get volumes for this service
+        if let Some(volumes) = service_config.get("volumes") {
+            let volume_list = match volumes {
+                Value::Sequence(seq) => seq,
+                _ => {
+                    return Err(format!("Service '{}': volumes must be an array", service_name));
+                }
+            };
+
+            for (i, vol) in volume_list.iter().enumerate() {
+                let host_path = match vol {
+                    // Short syntax: "./host:/container" or "/host:/container"
+                    Value::String(s) => {
+                        s.split(':').next().unwrap_or(s).to_string()
+                    }
+                    // Long syntax: { type: bind, source: /host, target: /container }
+                    Value::Mapping(m) => {
+                        if let Some(src) = m.get(&Value::String("source".to_string())) {
+                            src.as_str().unwrap_or("").to_string()
+                        } else {
+                            continue; // No source, skip
+                        }
+                    }
+                    _ => continue,
+                };
+
+                if host_path.is_empty() {
+                    continue;
+                }
+
+                // Normalize path (remove trailing /)
+                let normalized = host_path.trim_end_matches('/');
+
+                // Check against forbidden directories
+                for &forbidden in FORBID_DIRECTORY {
+                    if normalized == forbidden || normalized.starts_with(&format!("{}/", forbidden)) {
+                        return Err(format!(
+                            "Service '{}': volume {} uses forbidden path '{}' (conflicts with '{}')",
+                            service_name, i + 1, host_path, forbidden
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn write_compose_file(project_name: &str, content: &str) -> Result<std::path::PathBuf, String> {
     ensure_compose_dir()?;
-    
+
     let project_dir = Path::new(COMPOSE_DIR).join(project_name);
     fs::create_dir_all(&project_dir)
         .map_err(|e| format!("Failed to create project directory: {}", e))?;
-    
+
     let compose_path = project_dir.join("compose.yaml");
     let mut file = fs::File::create(&compose_path)
         .map_err(|e| format!("Failed to create compose file: {}", e))?;
-    
+
     file.write_all(content.as_bytes())
         .map_err(|e| format!("Failed to write compose file: {}", e))?;
-    
+
     Ok(compose_path)
 }
 
@@ -124,11 +189,21 @@ pub async fn compose_up(
 
     let req_body = body.into_inner();
     let content = req_body.content.trim();
-    
+
     if content.is_empty() {
         return HttpResponse::BadRequest().json(ComposeUpResponse {
             success: false,
             message: "Compose file content is required".to_string(),
+            project_name: None,
+            output: None,
+        });
+    }
+
+    // Validate volumes host paths against forbidden directories
+    if let Err(e) = validate_volumes(content) {
+        return HttpResponse::BadRequest().json(ComposeUpResponse {
+            success: false,
+            message: e,
             project_name: None,
             output: None,
         });
