@@ -6,105 +6,19 @@ use serde::{Deserialize, Serialize};
 use crate::DbPool;
 use crate::utils::admin::{validate_token_with_db, verify_admin_access};
 
-/// Helper trait to convert enum to string
-trait ToStringOpt {
-    fn to_string_opt(self) -> String;
-}
-
-impl ToStringOpt for Option<bollard::models::ContainerSummaryStateEnum> {
-    fn to_string_opt(self) -> String {
-        self.map(|s| format!("{:?}", s).to_lowercase())
-            .unwrap_or_default()
-    }
-}
-
-impl ToStringOpt for Option<bollard::models::PortSummaryTypeEnum> {
-    fn to_string_opt(self) -> String {
-        self.map(|s| format!("{:?}", s).to_lowercase())
-            .unwrap_or_default()
-    }
-}
-
-impl ToStringOpt for Option<bollard::models::MountPointTypeEnum> {
-    fn to_string_opt(self) -> String {
-        self.map(|s| format!("{:?}", s).to_lowercase())
-            .unwrap_or_default()
-    }
-}
-
 /// Container information
 #[derive(Serialize, Debug)]
 pub struct ContainerInfo {
     /// Container ID (short form)
     pub id: String,
-    /// Container names (with leading slash)
-    pub names: Vec<String>,
+    /// Container name (first name without leading slash)
+    pub name: String,
     /// Image name
     pub image: String,
-    /// Image ID
-    pub image_id: String,
-    /// Command
-    pub command: String,
-    /// Created timestamp (Unix timestamp)
-    pub created: i64,
     /// Container status (e.g., "Up 2 hours", "Exited (0) 3 days ago")
     pub status: String,
-    /// Container state (e.g., "running", "exited", "paused", "restarting", "dead")
-    pub state: String,
-    /// Ports
-    pub ports: Vec<PortMapping>,
-    /// Labels
-    pub labels: std::collections::HashMap<String, String>,
-    /// Size of the container's root filesystem (RW)
-    pub size_rw: Option<i64>,
-    /// Size of the container's root filesystem (total)
-    pub size_root_fs: Option<i64>,
-    /// Host config
-    pub host_config: Option<HostConfigInfo>,
-    /// Network settings
-    pub network_settings: Option<NetworkSettingsInfo>,
-    /// Mounts
-    pub mounts: Vec<MountInfo>,
-}
-
-/// Port mapping information
-#[derive(Serialize, Debug)]
-pub struct PortMapping {
-    pub ip: String,
-    pub private_port: u16,
-    pub public_port: Option<u16>,
-    pub typ: String,
-}
-
-/// Host config info
-#[derive(Serialize, Debug)]
-pub struct HostConfigInfo {
-    pub network_mode: String,
-}
-
-/// Network settings info
-#[derive(Serialize, Debug)]
-pub struct NetworkSettingsInfo {
-    pub networks: std::collections::HashMap<String, NetworkInfo>,
-}
-
-/// Network info
-#[derive(Serialize, Debug)]
-pub struct NetworkInfo {
-    pub ip_address: String,
-    pub gateway: String,
-    pub mac_address: String,
-}
-
-/// Mount info
-#[derive(Serialize, Debug)]
-pub struct MountInfo {
-    pub typ: String,
-    pub source: String,
-    pub destination: String,
-    pub mode: String,
-    pub rw: bool,
-    pub propagation: String,
+    /// Created timestamp (Unix timestamp)
+    pub created: i64,
 }
 
 /// Get containers response
@@ -123,7 +37,7 @@ fn format_short_id(id: &str) -> String {
 /// Get all containers (including offline and online)
 ///
 /// # Endpoint
-/// GET /docker/container
+/// GET /docker/containers
 ///
 /// # Response
 /// ```json
@@ -133,16 +47,10 @@ fn format_short_id(id: &str) -> String {
 ///     "containers": [
 ///         {
 ///             "id": "abc123...",
-///             "names": ["/my-container"],
+///             "name": "my-container",
 ///             "image": "nginx:latest",
-///             "image_id": "sha256:xxx...",
-///             "command": "nginx -g 'daemon off;'",
-///             "created": 1234567890,
 ///             "status": "Up 2 hours",
-///             "state": "running",
-///             "ports": [...],
-///             "labels": {...},
-///             ...
+///             "created": 1234567890
 ///         }
 ///     ]
 /// }
@@ -178,60 +86,15 @@ pub async fn get_containers(req: HttpRequest, pool: web::Data<DbPool>) -> impl R
                 .into_iter()
                 .map(|c| ContainerInfo {
                     id: format_short_id(&c.id.unwrap_or_default()),
-                    names: c.names.unwrap_or_default(),
+                    name: c
+                        .names
+                        .as_ref()
+                        .and_then(|n| n.first())
+                        .map(|n| n.trim_start_matches('/').to_string())
+                        .unwrap_or_default(),
                     image: c.image.unwrap_or_default(),
-                    image_id: format_short_id(&c.image_id.unwrap_or_default()),
-                    command: c.command.unwrap_or_default(),
-                    created: c.created.unwrap_or_default(),
                     status: c.status.unwrap_or_default(),
-                    state: c.state.to_string_opt(),
-                    ports: c
-                        .ports
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|p| PortMapping {
-                            ip: p.ip.unwrap_or_default(),
-                            private_port: p.private_port,
-                            public_port: p.public_port,
-                            typ: p.typ.to_string_opt(),
-                        })
-                        .collect(),
-                    labels: c.labels.unwrap_or_default(),
-                    size_rw: c.size_rw,
-                    size_root_fs: c.size_root_fs,
-                    host_config: c.host_config.map(|h| HostConfigInfo {
-                        network_mode: h.network_mode.unwrap_or_default(),
-                    }),
-                    network_settings: c.network_settings.map(|n| NetworkSettingsInfo {
-                        networks: n
-                            .networks
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(|(name, net)| {
-                                (
-                                    name,
-                                    NetworkInfo {
-                                        ip_address: net.ip_address.unwrap_or_default(),
-                                        gateway: net.gateway.unwrap_or_default(),
-                                        mac_address: net.mac_address.unwrap_or_default(),
-                                    },
-                                )
-                            })
-                            .collect(),
-                    }),
-                    mounts: c
-                        .mounts
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|m| MountInfo {
-                            typ: m.typ.to_string_opt(),
-                            source: m.source.unwrap_or_default(),
-                            destination: m.destination.unwrap_or_default(),
-                            mode: m.mode.unwrap_or_default(),
-                            rw: m.rw.unwrap_or_default(),
-                            propagation: m.propagation.unwrap_or_default(),
-                        })
-                        .collect(),
+                    created: c.created.unwrap_or_default(),
                 })
                 .collect();
 
