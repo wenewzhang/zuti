@@ -3,8 +3,8 @@ use bollard::Docker;
 use bollard::query_parameters::ListContainersOptions;
 use serde::{Deserialize, Serialize};
 
-use crate::utils::admin::verify_admin_access;
 use crate::DbPool;
+use crate::utils::admin::{validate_token_with_db, verify_admin_access};
 
 /// Helper trait to convert enum to string
 trait ToStringOpt {
