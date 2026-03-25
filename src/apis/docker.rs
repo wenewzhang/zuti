@@ -1552,29 +1552,20 @@ pub async fn list_registry_mirrors(
     let content = match read_registry_config() {
         Ok(c) => c,
         Err(e) => {
-            return HttpResponse::InternalServerError().json(MirrorListResponse {
-                success: false,
-                message: e,
-                groups: None,
-            });
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "success": false,
+                "message": e,
+            }));
         }
     };
 
     if content.is_empty() {
-        return HttpResponse::Ok().json(MirrorListResponse {
-            success: true,
-            message: "No registry configuration found".to_string(),
-            groups: Some(vec![]),
-        });
+        return HttpResponse::Ok().json(Vec::<MirrorGroup>::new());
     }
 
     let groups = parse_mirror_groups(&content);
 
-    HttpResponse::Ok().json(MirrorListResponse {
-        success: true,
-        message: format!("Found {} registry group(s)", groups.len()),
-        groups: Some(groups),
-    })
+    HttpResponse::Ok().json(groups)
 }
 
 /// Delete a mirror from registry by location (searches all registries)
