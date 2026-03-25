@@ -265,7 +265,7 @@ create container
     -H "Content-Type: application/json" \
     -d '{
       "prefix": "docker.io",
-      "location": "docker.nju.edu.cn",
+      "location": "docker.io",
       "insecure": false
     }'
 ```
@@ -291,7 +291,7 @@ Mirror
   curl -k -X POST "${HOST}/docker/setting/mirror" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d '{"location":"hub-mirror.c.163.com"}'
+    -d '{"location":"mirror.baidubce.com"}'
 
   curl -k -X POST "${HOST}/docker/setting/mirror" \
     -H "Authorization: Bearer ${TOKEN}" \
@@ -306,7 +306,7 @@ Mirror
   curl -k -X DELETE "${HOST}/docker/setting/mirror" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d '{"location":"docker.nju.edu.cn"}'
+    -d '{"location":"mirror.baidubce.com"}'
 
 ```
 
