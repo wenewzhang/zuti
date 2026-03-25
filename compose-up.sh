@@ -12,7 +12,7 @@ services:
     environment:
       POSTGRES_PASSWORD: "dev_password"
     volumes:
-      - ./postgres_data:/var/lib/postgresql/data
+      - /datapool/postgres_data:/var/lib/postgresql/data
     networks:
       - zuti-network
     healthcheck:

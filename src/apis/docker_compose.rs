@@ -33,7 +33,6 @@ pub struct ComposeUpResponse {
     pub success: bool,
     pub message: String,
     pub project_name: Option<String>,
-    pub output: Option<String>,
 }
 
 fn ensure_compose_dir() -> Result<(), String> {
@@ -195,7 +194,6 @@ pub async fn compose_up(
             success: false,
             message: "Compose file content is required".to_string(),
             project_name: None,
-            output: None,
         });
     }
 
@@ -205,7 +203,6 @@ pub async fn compose_up(
             success: false,
             message: e,
             project_name: None,
-            output: None,
         });
     }
 
@@ -221,23 +218,20 @@ pub async fn compose_up(
                 success: false,
                 message: e,
                 project_name: Some(project_name),
-                output: None,
             });
         }
     };
 
     match execute_compose_up(&project_name, &compose_path, req_body.detached, req_body.build) {
-        Ok(output) => HttpResponse::Ok().json(ComposeUpResponse {
+        Ok(_) => HttpResponse::Ok().json(ComposeUpResponse {
             success: true,
             message: format!("Compose project '{}' started successfully", project_name),
             project_name: Some(project_name),
-            output: Some(output),
         }),
         Err(e) => HttpResponse::InternalServerError().json(ComposeUpResponse {
             success: false,
             message: e,
             project_name: Some(project_name),
-            output: None,
         }),
     }
 }
