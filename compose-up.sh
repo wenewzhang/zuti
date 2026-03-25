@@ -8,11 +8,11 @@ HOST="https://192.168.3.248:8443"
 services:
   db:
     image: docker.io/library/postgres:14.22-trixie
-    container_name: zuti-db
+    container_name: zuti-dbt
     environment:
       POSTGRES_PASSWORD: "dev_password"
     volumes:
-      - /datapool/postgres_data:/var/lib/postgresql/data
+      - /var/lib/postgresql/data
     networks:
       - zuti-network
     healthcheck:
@@ -29,7 +29,7 @@ EOF
 
  jq -n \
     --arg content "$COMPOSE_CONTENT" \
-    --arg project "myapp" \
+    --arg project "myappt" \
     '{
       content: $content,
       project_name: $project,

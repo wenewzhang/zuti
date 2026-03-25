@@ -73,7 +73,12 @@ fn validate_volumes(content: &str) -> Result<(), String> {
             for (i, vol) in volume_list.iter().enumerate() {
                 let host_path = match vol {
                     // Short syntax: "./host:/container" or "/host:/container"
+                    // Anonymous volume: "/container" (no colon, skip validation)
                     Value::String(s) => {
+                        if !s.contains(':') {
+                            // Anonymous volume (temporary/cache data), no host path to validate
+                            continue;
+                        }
                         s.split(':').next().unwrap_or(s).to_string()
                     }
                     // Long syntax: { type: bind, source: /host, target: /container }
