@@ -295,7 +295,6 @@ pub struct ComposeDownRequest {
 pub struct ComposeDownResponse {
     pub success: bool,
     pub message: String,
-    pub output: Option<String>,
 }
 
 /// Execute podman-compose down
@@ -379,7 +378,6 @@ pub async fn compose_down(
         return HttpResponse::BadRequest().json(ComposeDownResponse {
             success: false,
             message: "Project name is required".to_string(),
-            output: None,
         });
     }
 
@@ -391,13 +389,12 @@ pub async fn compose_down(
         return HttpResponse::NotFound().json(ComposeDownResponse {
             success: false,
             message: format!("Project '{}' not found", project_name),
-            output: None,
         });
     }
 
     // 4. Execute podman-compose down
     match execute_compose_down(project_name, &compose_path, req_body.volumes, req_body.remove_images) {
-        Ok(output) => {
+        Ok(_) => {
             // 5. Remove project directory after successful down
             if let Err(e) = fs::remove_dir_all(&project_dir) {
                 log::warn!("Failed to remove project directory: {}", e);
@@ -406,13 +403,11 @@ pub async fn compose_down(
             HttpResponse::Ok().json(ComposeDownResponse {
                 success: true,
                 message: format!("Compose project '{}' stopped and removed successfully", project_name),
-                output: Some(output),
             })
         }
         Err(e) => HttpResponse::InternalServerError().json(ComposeDownResponse {
             success: false,
             message: e,
-            output: None,
         }),
     }
 }

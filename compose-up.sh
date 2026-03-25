@@ -5,21 +5,25 @@ HOST="https://192.168.3.248:8443"
 
   # 读取 compose 文件内容
   COMPOSE_CONTENT=$(cat <<'EOF'
-  services:
-    db:
-      image: postgres:15
-      environment:
-        POSTGRES_PASSWORD: secret
-      volumes:
-        - db_data:/var/lib/postgresql/data
-    web:
-      image: myapp:latest
-      ports:
-        - "3000:3000"
-      depends_on:
-        - db
-  volumes:
-    db_data:
+services:
+  db:
+    image: docker.io/library/postgres:14.22-trixie
+    container_name: zuti-db
+    environment:
+      POSTGRES_PASSWORD: "dev_password"
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    networks:
+      - zuti-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  zuti-network:
+    driver: bridge
 EOF
 )
 

@@ -349,21 +349,21 @@ Podman compose
 
 
 
-  curl -k https://localhost:8443/docker/compose_list \
-    -H "Authorization: Bearer YOUR_JWT_TOKEN"
+  curl -k https://192.168.3.248:8443/docker/compose_list \
+    -H "Authorization: Bearer $TOKEN"
 
 
-  curl -k -X DELETE https://localhost:8443/docker/compose_down \
-    -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  curl -k -X DELETE https://192.168.3.248:8443/docker/compose_down \
+    -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
-      "project_name": "nginx-demo"
+      "project_name": "myapp"
     }'
 
   删除项目及卷
 
-  curl -k -X DELETE https://localhost:8443/docker/compose_down \
-    -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  curl -k -X DELETE https://192.168.3.248:8443/docker/compose_down \
+    -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
       "project_name": "myapp",
@@ -372,8 +372,8 @@ Podman compose
 
   删除项目、卷和镜像
 
-  curl -k -X DELETE https://localhost:8443/docker/compose_down \
-    -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  curl -k -X DELETE https://192.168.3.248:8443/docker/compose_down \
+    -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
       "project_name": "myapp",
