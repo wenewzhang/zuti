@@ -1,8 +1,8 @@
-use actix_web::{get, HttpRequest, HttpResponse, Responder};
+use actix_web::{get, post, HttpRequest, HttpResponse, Responder, web};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
-use crate::utils::admin::validate_token_with_db;
+use crate::utils::admin::{validate_token_with_db, verify_admin_access};
 
 /// Dataset 信息结构体
 #[derive(Serialize, Deserialize, Debug)]
@@ -84,7 +84,7 @@ fn parse_root_datasets(output: &str) -> Vec<DatasetInfo> {
 
 /// zfs/bootfs API - 获取所有 mountpoint 为 / 的 ZFS dataset（需要 JWT 认证）
 #[get("/zfs/bootfs")]
-pub async fn get_bootfs(req: HttpRequest, pool: actix_web::web::Data<crate::DbPool>) -> impl Responder {
+pub async fn get_bootfs(req: HttpRequest, pool: web::Data<crate::DbPool>) -> impl Responder {
     // 验证 JWT token
     if let Err(response) = validate_token_with_db(&req, &pool).await {
         return response;
@@ -113,6 +113,88 @@ pub async fn get_bootfs(req: HttpRequest, pool: actix_web::web::Data<crate::DbPo
         data: Some(BootfsData { bootfs, datasets }),
         error: None,
     })
+}
+
+// set_bootfs 请求结构体
+#[derive(Deserialize)]
+pub struct SetBootfsRequest {
+    pub dataset: String,  // 例如: "one-pool/ROOT/zuti-260225_NEW"
+    pub pool: String,     // 例如: "one-pool"
+}
+
+// set_bootfs 响应结构体
+#[derive(Serialize)]
+pub struct SetBootfsResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// zfs/set_bootfs API - 设置 ZFS pool 的 bootfs 属性（需要 JWT 认证，仅管理员可用）
+#[post("/zfs/set_bootfs")]
+pub async fn set_bootfs(
+    req: HttpRequest,
+    bootfs_req: web::Json<SetBootfsRequest>,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let dataset = &bootfs_req.dataset;
+    let pool_name = &bootfs_req.pool;
+
+    // 2. 验证 dataset 名称合法性
+    // ZFS dataset 名称允许: 字母、数字、下划线、连字符、点、斜杠
+    if !dataset.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/') {
+        return HttpResponse::BadRequest().json(SetBootfsResponse {
+            success: false,
+            message: "Invalid dataset name format".to_string(),
+            error: Some("Dataset name must contain only alphanumeric characters, underscores, hyphens, dots, or slashes".to_string()),
+        });
+    }
+
+    // 3. 验证 pool 名称合法性
+    if !pool_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.') {
+        return HttpResponse::BadRequest().json(SetBootfsResponse {
+            success: false,
+            message: "Invalid pool name format".to_string(),
+            error: Some("Pool name must contain only alphanumeric characters, underscores, hyphens, or dots".to_string()),
+        });
+    }
+
+    // 4. 构建并执行 zpool set bootfs 命令
+    let bootfs_value = format!("bootfs={}", dataset);
+    let output = match Command::new("zpool")
+        .args(["set", &bootfs_value, pool_name])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SetBootfsResponse {
+                success: false,
+                message: "Failed to execute zpool set command".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    if output.status.success() {
+        HttpResponse::Ok().json(SetBootfsResponse {
+            success: true,
+            message: format!("Successfully set bootfs to '{}' for pool '{}'", dataset, pool_name),
+            error: None,
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        HttpResponse::InternalServerError().json(SetBootfsResponse {
+            success: false,
+            message: format!("Failed to set bootfs for pool '{}'", pool_name),
+            error: Some(stderr.to_string()),
+        })
+    }
 }
 
 #[cfg(test)]
