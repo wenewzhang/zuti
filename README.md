@@ -388,3 +388,27 @@ Podman compose
 
 
 ```
+
+pod
+```
+  # 列出 pods
+  curl -k "https://192.168.3.248:8443/podman/pod/list" \
+    -H "Authorization: Bearer ${TOKEN}"
+
+  # 启动 pod
+  curl -k -X POST "https://192.168.3.248:8443/podman/pod/start/my-pod" \
+    -H "Authorization: Bearer ${TOKEN}"
+
+  # 停止 pod
+  curl -k -X POST "https://192.168.3.248:8443/podman/pod/stop/my-pod" \
+    -H "Authorization: Bearer ${TOKEN}"
+
+  # 重启 pod
+  curl -k -X POST "https://192.168.3.248:8443/podman/pod/restart/my-pod" \
+    -H "Authorization: Bearer ${TOKEN}"
+
+  # 删除 pod (强制)
+  curl -k -X DELETE "https://192.168.3.248:8443/podman/pod/remove/my-pod" \
+    -H "Authorization: Bearer ${TOKEN}"
+
+```

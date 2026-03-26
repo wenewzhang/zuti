@@ -544,3 +544,418 @@ pub async fn compose_down(
         }),
     }
 }
+
+
+// ============================================================================
+// Podman Pod Management APIs
+// ============================================================================
+
+use serde::ser::{SerializeStruct, Serializer};
+
+/// Pod information
+#[derive(Debug)]
+pub struct PodInfo {
+    pub id: String,
+    pub name: String,
+    pub status: String,
+    pub created: String,
+}
+
+impl Serialize for PodInfo {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("PodInfo", 4)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("name", &self.name)?;
+        state.serialize_field("status", &self.status)?;
+        state.serialize_field("created", &self.created)?;
+        state.end()
+    }
+}
+
+/// Pod list response
+#[derive(Serialize)]
+pub struct PodListResponse {
+    pub success: bool,
+    pub message: String,
+    pub pods: Option<Vec<PodInfo>>,
+}
+
+/// Pod action response
+#[derive(Serialize)]
+pub struct PodActionResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+/// Parse podman pod ps --format json output
+fn parse_pod_ps_json(output: &str) -> Vec<PodInfo> {
+    let mut pods = Vec::new();
+    
+    // podman pod ps --format json returns an array of objects
+    if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(output) {
+        if let Some(array) = json_value.as_array() {
+            for item in array {
+                let id = item.get("Id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.chars().take(12).collect())
+                    .unwrap_or_default();
+                
+                let name = item.get("Name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                
+                let status = item.get("Status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                
+                let created = item.get("CreatedAt")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                
+                pods.push(PodInfo {
+                    id,
+                    name,
+                    status,
+                    created,
+                });
+            }
+        }
+    }
+    
+    pods
+}
+
+/// List all pods
+///
+/// # Endpoint
+/// GET /podman/pod/list
+///
+/// # Response
+/// ```json
+/// {
+///     "success": true,
+///     "message": "Found 2 pod(s)",
+///     "pods": [
+///         {"id": "abc123", "name": "my-pod", "status": "Running", "created": "2 hours ago"}
+///     ]
+/// }
+/// ```
+#[get("/podman/pod/list")]
+pub async fn pod_list(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+) -> impl Responder {
+    // 1. Verify token
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
+    // 2. Check podman exists
+    let check_cmd = Command::new("which")
+        .arg("podman")
+        .output();
+    
+    match check_cmd {
+        Ok(output) if !output.status.success() => {
+            return HttpResponse::ServiceUnavailable().json(PodListResponse {
+                success: false,
+                message: "podman not found. Please install podman first.".to_string(),
+                pods: None,
+            });
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(PodListResponse {
+                success: false,
+                message: format!("Failed to check podman: {}", e),
+                pods: None,
+            });
+        }
+        _ => {}
+    }
+
+    // 3. Execute podman pod ps --format json
+    let output = match Command::new("podman")
+        .args(["pod", "ps", "--format", "json"])
+        .output()
+    {
+        Ok(output) => output,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(PodListResponse {
+                success: false,
+                message: format!("Failed to execute podman pod ps: {}", e),
+                pods: None,
+            });
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if !output.status.success() {
+        return HttpResponse::InternalServerError().json(PodListResponse {
+            success: false,
+            message: format!("podman pod ps failed: {}", stderr),
+            pods: None,
+        });
+    }
+
+    // 4. Parse JSON output
+    let pods = parse_pod_ps_json(&stdout);
+    let count = pods.len();
+
+    HttpResponse::Ok().json(PodListResponse {
+        success: true,
+        message: format!("Found {} pod(s)", count),
+        pods: Some(pods),
+    })
+}
+
+
+/// Start a pod
+///
+/// # Endpoint
+/// POST /podman/pod/start/{name_or_id}
+///
+/// # Response
+/// ```json
+/// { "success": true, "message": "Pod 'my-pod' started successfully" }
+/// ```
+#[post("/podman/pod/start/{name_or_id}")]
+pub async fn pod_start(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    path: web::Path<String>,
+) -> impl Responder {
+    // 1. Verify admin access
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let name_or_id = path.into_inner();
+
+    if name_or_id.is_empty() {
+        return HttpResponse::BadRequest().json(PodActionResponse {
+            success: false,
+            message: "Pod name or ID is required".to_string(),
+        });
+    }
+
+    // 2. Execute podman pod start
+    let output = match Command::new("podman")
+        .args(["pod", "start", &name_or_id])
+        .output()
+    {
+        Ok(output) => output,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(PodActionResponse {
+                success: false,
+                message: format!("Failed to execute podman pod start: {}", e),
+            });
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if output.status.success() {
+        HttpResponse::Ok().json(PodActionResponse {
+            success: true,
+            message: format!("Pod '{}' started successfully: {}", name_or_id, stdout.trim()),
+        })
+    } else {
+        HttpResponse::InternalServerError().json(PodActionResponse {
+            success: false,
+            message: format!("Failed to start pod '{}': {}", name_or_id, stderr),
+        })
+    }
+}
+
+
+/// Stop a pod
+///
+/// # Endpoint
+/// POST /podman/pod/stop/{name_or_id}
+///
+/// # Response
+/// ```json
+/// { "success": true, "message": "Pod 'my-pod' stopped successfully" }
+/// ```
+#[post("/podman/pod/stop/{name_or_id}")]
+pub async fn pod_stop(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    path: web::Path<String>,
+) -> impl Responder {
+    // 1. Verify admin access
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let name_or_id = path.into_inner();
+
+    if name_or_id.is_empty() {
+        return HttpResponse::BadRequest().json(PodActionResponse {
+            success: false,
+            message: "Pod name or ID is required".to_string(),
+        });
+    }
+
+    // 2. Execute podman pod stop
+    let output = match Command::new("podman")
+        .args(["pod", "stop", &name_or_id])
+        .output()
+    {
+        Ok(output) => output,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(PodActionResponse {
+                success: false,
+                message: format!("Failed to execute podman pod stop: {}", e),
+            });
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if output.status.success() {
+        HttpResponse::Ok().json(PodActionResponse {
+            success: true,
+            message: format!("Pod '{}' stopped successfully: {}", name_or_id, stdout.trim()),
+        })
+    } else {
+        HttpResponse::InternalServerError().json(PodActionResponse {
+            success: false,
+            message: format!("Failed to stop pod '{}': {}", name_or_id, stderr),
+        })
+    }
+}
+
+
+/// Restart a pod
+///
+/// # Endpoint
+/// POST /podman/pod/restart/{name_or_id}
+///
+/// # Response
+/// ```json
+/// { "success": true, "message": "Pod 'my-pod' restarted successfully" }
+/// ```
+#[post("/podman/pod/restart/{name_or_id}")]
+pub async fn pod_restart(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    path: web::Path<String>,
+) -> impl Responder {
+    // 1. Verify admin access
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let name_or_id = path.into_inner();
+
+    if name_or_id.is_empty() {
+        return HttpResponse::BadRequest().json(PodActionResponse {
+            success: false,
+            message: "Pod name or ID is required".to_string(),
+        });
+    }
+
+    // 2. Execute podman pod restart
+    let output = match Command::new("podman")
+        .args(["pod", "restart", &name_or_id])
+        .output()
+    {
+        Ok(output) => output,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(PodActionResponse {
+                success: false,
+                message: format!("Failed to execute podman pod restart: {}", e),
+            });
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if output.status.success() {
+        HttpResponse::Ok().json(PodActionResponse {
+            success: true,
+            message: format!("Pod '{}' restarted successfully: {}", name_or_id, stdout.trim()),
+        })
+    } else {
+        HttpResponse::InternalServerError().json(PodActionResponse {
+            success: false,
+            message: format!("Failed to restart pod '{}': {}", name_or_id, stderr),
+        })
+    }
+}
+
+
+/// Remove a pod
+///
+/// # Endpoint
+/// DELETE /podman/pod/remove/{name_or_id}
+///
+/// # Response
+/// ```json
+/// { "success": true, "message": "Pod 'my-pod' removed successfully" }
+/// ```
+#[delete("/podman/pod/remove/{name_or_id}")]
+pub async fn pod_remove(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    path: web::Path<String>,
+) -> impl Responder {
+    // 1. Verify admin access
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let name_or_id = path.into_inner();
+
+    if name_or_id.is_empty() {
+        return HttpResponse::BadRequest().json(PodActionResponse {
+            success: false,
+            message: "Pod name or ID is required".to_string(),
+        });
+    }
+
+    // 2. Execute podman pod rm --force
+    let output = match Command::new("podman")
+        .args(["pod", "rm", "--force", &name_or_id])
+        .output()
+    {
+        Ok(output) => output,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(PodActionResponse {
+                success: false,
+                message: format!("Failed to execute podman pod rm: {}", e),
+            });
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if output.status.success() {
+        HttpResponse::Ok().json(PodActionResponse {
+            success: true,
+            message: format!("Pod '{}' removed successfully: {}", name_or_id, stdout.trim()),
+        })
+    } else {
+        HttpResponse::InternalServerError().json(PodActionResponse {
+            success: false,
+            message: format!("Failed to remove pod '{}': {}", name_or_id, stderr),
+        })
+    }
+}
