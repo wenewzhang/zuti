@@ -11,11 +11,18 @@ pub struct DatasetInfo {
     pub mountpoint: String,
 }
 
+/// Bootfs 数据结构体
+#[derive(Serialize)]
+pub struct BootfsData {
+    pub bootfs: String,
+    pub datasets: Vec<DatasetInfo>,
+}
+
 /// Bootfs 响应结构体
 #[derive(Serialize)]
 pub struct BootfsResponse {
     pub success: bool,
-    pub data: Option<Vec<DatasetInfo>>,
+    pub data: Option<BootfsData>,
     pub error: Option<String>,
 }
 
@@ -26,6 +33,27 @@ fn get_zfs_list_output() -> Option<String> {
         .output()
         .ok()
         .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// 获取当前 / 挂载的 bootfs (findmnt -n -o SOURCE /)
+fn get_bootfs_source() -> Option<String> {
+    Command::new("findmnt")
+        .args(["-n", "-o", "SOURCE", "/"])
+        .output()
+        .ok()
+        .and_then(|output| {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let trimmed = stdout.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            } else {
+                None
+            }
+        })
 }
 
 /// 从 zfs list 输出中解析 mountpoint 为 / 的 dataset
@@ -77,9 +105,12 @@ pub async fn get_bootfs(req: HttpRequest, pool: actix_web::web::Data<crate::DbPo
     // 解析输出，获取 mountpoint 为 / 的 dataset
     let datasets = parse_root_datasets(&output);
 
+    // 获取当前 bootfs
+    let bootfs = get_bootfs_source().unwrap_or_default();
+
     HttpResponse::Ok().json(BootfsResponse {
         success: true,
-        data: Some(datasets),
+        data: Some(BootfsData { bootfs, datasets }),
         error: None,
     })
 }
