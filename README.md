@@ -411,9 +411,41 @@ pod
   curl -k -X DELETE "https://192.168.3.248:8443/podman/pod/remove/my-pod" \
     -H "Authorization: Bearer ${TOKEN}"
 
+```
+
+ZFS set bootfs & bootfs
+```
 zpool set bootfs=one-pool/ROOT/zuti-260225_NEW one-pool
 root@onenas:~# findmnt -n -o SOURCE /
 
   curl -k "https://192.168.3.248:8443/zfs/bootfs" \
     -H "Authorization: Bearer ${TOKEN}"
+
+  curl -k -X POST "https://192.168.3.248:8443/zfs/set_bootfs" \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d '{
+      "dataset": "one-pool/ROOT/zuti-260225",
+      "pool": "one-pool"
+      }'    
+
+```
+
+  1. 重启系统 API
+
+  • 端点: POST /zfs/reboot
+  • 权限: 需要 JWT 认证 + 管理员权限
+  • 命令: systemctl reboot
+```
+  curl -k -X POST "https://192.168.3.248:8443/zfs/reboot" \
+      -H "Authorization: Bearer ${TOKEN}"
+```
+  2. 关闭系统 API
+
+  • 端点: POST /zfs/shutdown
+  • 权限: 需要 JWT 认证 + 管理员权限
+  • 命令: systemctl poweroff
+```
+  curl -k -X POST "https://192.168.3.248:8443/zfs/shutdown" \
+      -H "Authorization: Bearer ${TOKEN}"
 ```
