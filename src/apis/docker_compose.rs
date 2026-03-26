@@ -932,7 +932,7 @@ pub async fn pod_remove(
 
     // 2. Execute podman pod rm --force
     let output = match Command::new("podman")
-        .args(["pod", "rm", "--force", &name_or_id])
+        .args(["pod", "rm", &name_or_id])
         .output()
     {
         Ok(output) => output,
