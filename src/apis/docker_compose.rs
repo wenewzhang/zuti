@@ -419,6 +419,65 @@ fn execute_compose_down(
     }
 }
 
+/// Delete compose project files (YAML only, not stopping containers)
+///
+/// # Endpoint
+/// DELETE /docker/compose/delete
+///
+/// # Path Parameters
+/// - `project_name`: Project name to delete
+///
+/// # Response
+/// ```json
+/// { "success": true, "message": "Project files deleted" }
+/// ```
+#[delete("/docker/compose/delete/{project_name}")]
+pub async fn compose_delete(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    path: web::Path<String>,
+) -> impl Responder {
+    // 1. Verify admin access
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    // 2. Get project name from path
+    let project_name = path.into_inner().trim().to_string();
+    
+    if project_name.is_empty() {
+        return HttpResponse::BadRequest().json(ComposeDownResponse {
+            success: false,
+            message: "Project name is required".to_string(),
+        });
+    }
+
+    // 3. Check if project exists
+    let project_dir = Path::new(COMPOSE_DIR).join(&project_name);
+    let compose_path = project_dir.join("compose.yaml");
+    
+    if !compose_path.exists() {
+        return HttpResponse::NotFound().json(ComposeDownResponse {
+            success: false,
+            message: format!("Project '{}' not found", project_name),
+        });
+    }
+
+    // 4. Remove project directory (YAML files only)
+    match fs::remove_dir_all(&project_dir) {
+        Ok(_) => HttpResponse::Ok().json(ComposeDownResponse {
+            success: true,
+            message: format!("Compose project '{}' files deleted successfully", project_name),
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(ComposeDownResponse {
+            success: false,
+            message: format!("Failed to delete project files: {}", e),
+        }),
+    }
+}
+
+
 /// Stop and remove Docker/Podman Compose project
 ///
 /// # Endpoint

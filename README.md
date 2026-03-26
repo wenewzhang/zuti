@@ -314,6 +314,8 @@ Mirror
 Volume setting
 ```
 export TOKEN=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczNzk5OTQ0LCJleHAiOjE3NzYzOTE5NDQsImp0aSI6IjhkNjNhNGMxLTdhNWYtNDY5OS1iMWYzLWFlOWRiYWZjNzczMiJ9.9_8T9z3CmT9noSz9kHGf1f0EOvAt90bVCaU2Tj7CzJg
+  curl -k https://192.168.3.248:8443/docker/containers \
+    -H "Authorization: Bearer $TOKEN"
 export  HOST="https://192.168.3.248:8443"
 
   # 添加数据卷
@@ -380,5 +382,9 @@ Podman compose
       "volumes": true,
       "remove_images": true
     }'
+
+  curl -k -X DELETE "https://192.168.3.248:8443/docker/compose/delete/myapp" \
+    -H "Authorization: Bearer ${TOKEN}"
+
 
 ```
