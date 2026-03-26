@@ -144,6 +144,49 @@ pub struct RebootResponse {
     pub error: Option<String>,
 }
 
+/// zfs/reboot_force API - 强制重启系统（需要 JWT 认证，仅管理员可用）
+#[post("/zfs/reboot_force")]
+pub async fn reboot_system_force(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    // 2. 执行 /sbin/reboot -f 命令
+    let output = match Command::new("/sbin/reboot")
+        .arg("-f")
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(RebootResponse {
+                success: false,
+                message: "Failed to execute reboot -f command".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    if output.status.success() {
+        HttpResponse::Ok().json(RebootResponse {
+            success: true,
+            message: "System is force rebooting...".to_string(),
+            error: None,
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        HttpResponse::InternalServerError().json(RebootResponse {
+            success: false,
+            message: "Failed to force reboot system".to_string(),
+            error: Some(stderr.to_string()),
+        })
+    }
+}
+
 /// zfs/reboot API - 重启系统（需要 JWT 认证，仅管理员可用）
 #[post("/zfs/reboot")]
 pub async fn reboot_system(
