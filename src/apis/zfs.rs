@@ -348,6 +348,122 @@ pub async fn set_bootfs(
     }
 }
 
+// zfs clone 请求结构体
+#[derive(Deserialize)]
+pub struct CloneDatasetRequest {
+    pub new_name: String,  // 例如: "zuti-260225_NEW"
+    pub dataset: String,   // 例如: "one-pool/ROOT/zuti-260225"
+}
+
+// zfs clone 响应结构体
+#[derive(Serialize)]
+pub struct CloneDatasetResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// zfs/clone API - 创建 ZFS snapshot 并 clone（需要 JWT 认证，仅管理员可用）
+#[post("/zfs/clone")]
+pub async fn clone_dataset(
+    req: HttpRequest,
+    clone_req: web::Json<CloneDatasetRequest>,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let new_name = &clone_req.new_name;
+    let dataset = &clone_req.dataset;
+
+    // 2. 验证 new_name 名称合法性
+    // snapshot 名称允许: 字母、数字、下划线、连字符、点
+    if !new_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.') {
+        return HttpResponse::BadRequest().json(CloneDatasetResponse {
+            success: false,
+            message: "Invalid new_name format".to_string(),
+            error: Some("new_name must contain only alphanumeric characters, underscores, hyphens, or dots".to_string()),
+        });
+    }
+
+    // 3. 验证 dataset 名称合法性
+    // ZFS dataset 名称允许: 字母、数字、下划线、连字符、点、斜杠
+    if !dataset.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/') {
+        return HttpResponse::BadRequest().json(CloneDatasetResponse {
+            success: false,
+            message: "Invalid dataset name format".to_string(),
+            error: Some("Dataset name must contain only alphanumeric characters, underscores, hyphens, dots, or slashes".to_string()),
+        });
+    }
+
+    // 4. 创建 snapshot: zfs snapshot dataset@new_name
+    let snapshot_name = format!("{}@{}", dataset, new_name);
+    let snapshot_output = match Command::new("zfs")
+        .args(["snapshot", &snapshot_name])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(CloneDatasetResponse {
+                success: false,
+                message: "Failed to execute zfs snapshot command".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    if !snapshot_output.status.success() {
+        let stderr = String::from_utf8_lossy(&snapshot_output.stderr);
+        return HttpResponse::InternalServerError().json(CloneDatasetResponse {
+            success: false,
+            message: format!("Failed to create snapshot '{}'", snapshot_name),
+            error: Some(stderr.to_string()),
+        });
+    }
+
+    // 5. 创建 clone: zfs clone dataset@new_name new_dataset
+    // new_dataset 是去掉 dataset 最后一段后的路径 + new_name
+    // 例如: one-pool/ROOT/zuti-260225 -> one-pool/ROOT/ + zuti-260225_NEW
+    let new_dataset = if let Some(last_slash_pos) = dataset.rfind('/') {
+        format!("{}{}", &dataset[..=last_slash_pos], new_name)
+    } else {
+        // 如果没有斜杠，直接在前面添加 new_name（这种情况在 ZFS 中很少见）
+        new_name.to_string()
+    };
+    let clone_name = new_dataset;
+    let clone_output = match Command::new("zfs")
+        .args(["clone", &snapshot_name, &clone_name])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(CloneDatasetResponse {
+                success: false,
+                message: "Failed to execute zfs clone command".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    if clone_output.status.success() {
+        HttpResponse::Ok().json(CloneDatasetResponse {
+            success: true,
+            message: format!("Successfully created snapshot '{}' and cloned to '{}'", snapshot_name, clone_name),
+            error: None,
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&clone_output.stderr);
+        HttpResponse::InternalServerError().json(CloneDatasetResponse {
+            success: false,
+            message: format!("Failed to clone snapshot '{}' to '{}'", snapshot_name, clone_name),
+            error: Some(stderr.to_string()),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

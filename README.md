@@ -425,7 +425,7 @@ root@onenas:~# findmnt -n -o SOURCE /
       -H "Authorization: Bearer ${TOKEN}" \
       -H "Content-Type: application/json" \
       -d '{
-      "dataset": "one-pool/ROOT/zuti-260225",
+      "dataset": "one-pool/ROOT/zuti260326",
       "pool": "one-pool"
       }'    
 
@@ -437,8 +437,7 @@ root@onenas:~# findmnt -n -o SOURCE /
   • 权限: 需要 JWT 认证 + 管理员权限
   • 命令: systemctl reboot
 ```
-  curl -k -X POST "https://192.168.3.248:8443/zfs/reboot" \
-      -H "Authorization: Bearer ${TOKEN}"
+  curl -k -X POST "https://192.168.3.248:8443/zfs/reboot" -H "Authorization: Bearer ${TOKEN}"
 ```
   2. 关闭系统 API
 
@@ -448,4 +447,16 @@ root@onenas:~# findmnt -n -o SOURCE /
 ```
   curl -k -X POST "https://192.168.3.248:8443/zfs/shutdown" \
       -H "Authorization: Bearer ${TOKEN}"
+```
+
+Clone
+
+```
+  curl -k -X POST "https://192.168.3.248:8443/zfs/clone" \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d '{
+          "new_name": "zuti-260225_NEW",
+          "dataset": "one-pool/ROOT/zuti-260225"
+      }'
 ```
