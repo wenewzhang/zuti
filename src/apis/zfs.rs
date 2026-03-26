@@ -35,21 +35,27 @@ fn get_zfs_list_output() -> Option<String> {
         .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-/// 获取当前 / 挂载的 bootfs (findmnt -n -o SOURCE /)
+/// 获取当前 bootfs (zpool get bootfs)
 fn get_bootfs_source() -> Option<String> {
-    Command::new("findmnt")
-        .args(["-n", "-o", "SOURCE", "/"])
+    Command::new("zpool")
+        .args(["get", "bootfs", "-H"])
         .output()
         .ok()
         .and_then(|output| {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                let trimmed = stdout.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed.to_string())
+                // 解析输出: "one-pool\tbootfs\tone-pool/ROOT/zuti-260225_NEW\tlocal"
+                for line in stdout.lines() {
+                    let parts: Vec<&str> = line.split('\t').collect();
+                    if parts.len() >= 3 {
+                        let value = parts[2].trim();
+                        // 排除 "-" 和 "none" 值
+                        if value != "-" && value != "none" && !value.is_empty() {
+                            return Some(value.to_string());
+                        }
+                    }
                 }
+                None
             } else {
                 None
             }
