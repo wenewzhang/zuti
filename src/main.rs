@@ -200,6 +200,7 @@ async fn main() -> std::io::Result<()> {
             .service(apis::container::stop_container)
             .service(apis::container::restart_container)
             .service(apis::container::remove_container)
+            .service(apis::zfs::get_bootfs)
     })
     .bind_openssl(&server_address, builder)?
     .run()

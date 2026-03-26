@@ -411,4 +411,9 @@ pod
   curl -k -X DELETE "https://192.168.3.248:8443/podman/pod/remove/my-pod" \
     -H "Authorization: Bearer ${TOKEN}"
 
+zpool set bootfs=one-pool/ROOT/zuti-260225_NEW one-pool
+root@onenas:~# findmnt -n -o SOURCE /
+
+  curl -k "https://192.168.3.248:8443/zfs/bootfs" \
+    -H "Authorization: Bearer ${TOKEN}"
 ```
