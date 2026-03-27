@@ -348,6 +348,76 @@ pub async fn set_bootfs(
     }
 }
 
+/// Dataset 属性结构体
+#[derive(Debug)]
+struct DatasetProperties {
+    mountpoint: String,
+    canmount: String,
+}
+
+/// 获取 dataset 的 mountpoint 和 canmount 属性
+fn get_dataset_properties(dataset: &str) -> Option<DatasetProperties> {
+    let output = Command::new("zfs")
+        .args(["get", "mountpoint,canmount", "-H", "-o", "property,value", dataset])
+        .output()
+        .ok()?;
+    
+    if !output.status.success() {
+        return None;
+    }
+    
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut mountpoint = String::new();
+    let mut canmount = String::new();
+    
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() >= 2 {
+            let property = parts[0].trim();
+            let value = parts[1].trim();
+            match property {
+                "mountpoint" => mountpoint = value.to_string(),
+                "canmount" => canmount = value.to_string(),
+                _ => {}
+            }
+        }
+    }
+    
+    if mountpoint.is_empty() || canmount.is_empty() {
+        None
+    } else {
+        Some(DatasetProperties { mountpoint, canmount })
+    }
+}
+
+/// 设置 dataset 的 mountpoint 属性
+fn set_mountpoint(dataset: &str, mountpoint: &str) -> Result<(), String> {
+    let output = Command::new("zfs")
+        .args(["set", &format!("mountpoint={}", mountpoint), dataset])
+        .output()
+        .map_err(|e| format!("Command error: {}", e))?;
+    
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+/// 设置 dataset 的 canmount 属性
+fn set_canmount(dataset: &str, canmount: &str) -> Result<(), String> {
+    let output = Command::new("zfs")
+        .args(["set", &format!("canmount={}", canmount), dataset])
+        .output()
+        .map_err(|e| format!("Command error: {}", e))?;
+    
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
 // zfs clone 请求结构体
 #[derive(Deserialize)]
 pub struct CloneDatasetRequest {
@@ -399,7 +469,19 @@ pub async fn clone_dataset(
         });
     }
 
-    // 4. 创建 snapshot: zfs snapshot dataset@new_name
+    // 4. 获取原 dataset 的 mountpoint 和 canmount 属性（在创建 snapshot 前获取）
+    let props = match get_dataset_properties(dataset) {
+        Some(p) => p,
+        None => {
+            return HttpResponse::InternalServerError().json(CloneDatasetResponse {
+                success: false,
+                message: "Failed to get source dataset properties".to_string(),
+                error: Some(format!("Cannot get mountpoint/canmount from '{}'", dataset)),
+            });
+        }
+    };
+
+    // 5. 创建 snapshot: zfs snapshot dataset@new_name
     let snapshot_name = format!("{}@{}", dataset, new_name);
     let snapshot_output = match Command::new("zfs")
         .args(["snapshot", &snapshot_name])
@@ -424,7 +506,7 @@ pub async fn clone_dataset(
         });
     }
 
-    // 5. 创建 clone: zfs clone dataset@new_name new_dataset
+    // 6. 创建 clone: zfs clone dataset@new_name new_dataset
     // new_dataset 是去掉 dataset 最后一段后的路径 + new_name
     // 例如: one-pool/ROOT/zuti-260225 -> one-pool/ROOT/ + zuti-260225_NEW
     let new_dataset = if let Some(last_slash_pos) = dataset.rfind('/') {
@@ -433,7 +515,7 @@ pub async fn clone_dataset(
         // 如果没有斜杠，直接在前面添加 new_name（这种情况在 ZFS 中很少见）
         new_name.to_string()
     };
-    let clone_name = new_dataset;
+    let clone_name = new_dataset.clone();
     let clone_output = match Command::new("zfs")
         .args(["clone", &snapshot_name, &clone_name])
         .output()
@@ -448,20 +530,69 @@ pub async fn clone_dataset(
         }
     };
 
-    if clone_output.status.success() {
-        HttpResponse::Ok().json(CloneDatasetResponse {
-            success: true,
-            message: format!("Successfully created snapshot '{}' and cloned to '{}'", snapshot_name, clone_name),
-            error: None,
-        })
-    } else {
+    if !clone_output.status.success() {
         let stderr = String::from_utf8_lossy(&clone_output.stderr);
-        HttpResponse::InternalServerError().json(CloneDatasetResponse {
+        return HttpResponse::InternalServerError().json(CloneDatasetResponse {
             success: false,
             message: format!("Failed to clone snapshot '{}' to '{}'", snapshot_name, clone_name),
             error: Some(stderr.to_string()),
-        })
+        });
     }
+
+    // 7. 设置新 clone 的 mountpoint 和 canmount 属性
+    // 判断是否为系统盘配置：mountpoint=/ 且 canmount=on
+    let is_system_root = props.mountpoint == "/" && props.canmount == "on";
+    
+    // 如果是系统盘，自动将 canmount 改为 noauto，避免挂载冲突
+    let target_canmount = if is_system_root {
+        "noauto"
+    } else {
+        &props.canmount
+    };
+
+    // 先设置 canmount=off 防止自动挂载冲突，再设置 mountpoint，最后设置目标 canmount
+    if let Err(e) = set_canmount(&clone_name, "off") {
+        return HttpResponse::InternalServerError().json(CloneDatasetResponse {
+            success: false,
+            message: format!("Clone created but failed to set canmount=off for '{}'", clone_name),
+            error: Some(e),
+        });
+    }
+
+    if let Err(e) = set_mountpoint(&clone_name, &props.mountpoint) {
+        return HttpResponse::InternalServerError().json(CloneDatasetResponse {
+            success: false,
+            message: format!("Clone created but failed to set mountpoint for '{}'", clone_name),
+            error: Some(e),
+        });
+    }
+
+    if let Err(e) = set_canmount(&clone_name, target_canmount) {
+        return HttpResponse::InternalServerError().json(CloneDatasetResponse {
+            success: false,
+            message: format!("Clone created but failed to set canmount='{}' for '{}'", target_canmount, clone_name),
+            error: Some(e),
+        });
+    }
+
+    // 构建返回消息
+    let message = if is_system_root {
+        format!(
+            "Successfully created snapshot '{}' and cloned to '{}' with mountpoint='{}', canmount changed from 'on' to 'noauto' (system root detected)",
+            snapshot_name, clone_name, props.mountpoint
+        )
+    } else {
+        format!(
+            "Successfully created snapshot '{}' and cloned to '{}' with mountpoint='{}', canmount='{}'",
+            snapshot_name, clone_name, props.mountpoint, target_canmount
+        )
+    };
+
+    HttpResponse::Ok().json(CloneDatasetResponse {
+        success: true,
+        message,
+        error: None,
+    })
 }
 
 #[cfg(test)]
