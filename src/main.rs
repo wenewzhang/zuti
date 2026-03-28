@@ -86,8 +86,8 @@ async fn main() -> std::io::Result<()> {
                 println!("Startup check: no users found in database");
                 println!("You can create a user with:");
                 // ANSI 红色: \x1b[31m, 重置: \x1b[0m
-                println!("\x1b[31mcurl -k -X POST https://192.168.3.248:8443/users \\x1b[0m");
-                println!("\x1b[31m    -H \"Content-Type: application/json\" \\x1b[0m");
+                println!("\x1b[31mcurl -k -X POST https://192.168.3.206:8443/admin_user \\\x1b[0m");
+                println!("\x1b[31m    -H \"Content-Type: application/json\" \\\x1b[0m");
                 println!("\x1b[31m    -d '{{\"name\": \"myadmin\", \"type_\": \"admin\", \"password\":\"123321\"}}'\x1b[0m");
             }
             Err(e) => {
@@ -203,6 +203,7 @@ async fn main() -> std::io::Result<()> {
             .service(apis::zfs::get_bootfs)
             .service(apis::zfs::set_bootfs)
             .service(apis::zfs::clone_dataset)
+            .service(apis::zfs::promote_dataset)
             .service(apis::zfs::reboot_system)
             .service(apis::zfs::reboot_system_force)
             .service(apis::zfs::shutdown_system)
