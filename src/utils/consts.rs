@@ -52,3 +52,35 @@ pub const USER_TYPE_SHARE: &str = "share";
 pub const USER_TYPE_ADMIN: &str = "admin";
 
 pub const ZUTI_SETTING_FILE: &str = "/.data/zuti/zuti.conf";
+
+/// 外部依赖命令列表
+/// 程序启动时会检查这些命令是否可用
+pub const EXTERNAL_COMMANDS: &[&str] = &[
+    // ZFS 管理
+    "zfs",
+    "zpool",
+    // 用户管理
+    "useradd",
+    "userdel",
+    "id",
+    "chpasswd",
+    // Samba 管理
+    "smbpasswd",
+    "pdbedit",
+    // 容器管理
+    "podman",
+    "podman-compose",
+    // 磁盘管理
+    "lsblk",
+    "dd",
+    "blockdev",
+    "wipefs",
+    "sgdisk",
+    "parted",
+    "partprobe",
+    // 系统控制
+    "systemctl",
+    // 权限管理
+    "chmod",
+    "chown",
+];

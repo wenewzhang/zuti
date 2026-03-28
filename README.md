@@ -1,6 +1,6 @@
 export token
 ```
-export TOKEN=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczNzk5OTQ0LCJleHAiOjE3NzYzOTE5NDQsImp0aSI6IjhkNjNhNGMxLTdhNWYtNDY5OS1iMWYzLWFlOWRiYWZjNzczMiJ9.9_8T9z3CmT9noSz9kHGf1f0EOvAt90bVCaU2Tj7CzJg
+export TOKEN=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzc0NjkwODM1LCJleHAiOjE3NzcyODI4MzUsImp0aSI6ImVjNzQ0YTMyLTY2MjctNGQ4Zi1iYzViLWE5ZjMxZjZhZWIzNiJ9.2VkalCXD_DxkNj-Bu5OSiRtblKipF7QFEoYN2LIwZt0
 ```
 
 创建用户
@@ -10,7 +10,7 @@ curl -k -X POST https://192.168.3.100:8443/admin_user     -H "Content-Type: appl
 
 登陆
 ```
-  curl -k -X POST https://192.168.3.100:8443/login \
+  curl -k -X POST https://192.168.3.206:8443/login \
       -H "Content-Type: application/json" \
       -d '{"username": "myadmin", "password": "123321"}'
 ```
@@ -98,7 +98,7 @@ smb public share
 ```
 
 
-  curl -k -X POST https://192.168.3.248:8443/smb/public_share \
+  curl -k -X POST https://192.168.3.206:8443/smb/public_share \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
@@ -112,7 +112,7 @@ smb public share
 
 smb auth share
 ```
-  curl  -k -X POST https://192.168.3.248:8443/smb/auth_share \
+  curl  -k -X POST https://192.168.3.206:8443/smb/auth_share \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
@@ -127,7 +127,7 @@ smb auth share
 
 samba user
 ```
-  curl  -k -X POST https://192.168.3.248:8443/smb/add_user \
+  curl  -k -X POST https://192.168.3.206:8443/smb/add_user \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
@@ -138,7 +138,7 @@ samba user
 
 delete samba user
 ```
- curl  -k -X POST https://192.168.3.248:8443/smb/delete_user \
+ curl  -k -X POST https://192.168.3.206:8443/smb/delete_user \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
@@ -149,19 +149,19 @@ delete samba user
 
 list user
 ```
-  curl  -k -X POST https://192.168.3.248:8443/smb/list_users \
+  curl  -k -X POST https://192.168.3.206:8443/smb/list_users \
     -H "Authorization: Bearer $TOKEN"
 ```
 
 list zfs pool
 ```
-  curl  -k -X POST https://192.168.3.248:8443/smb/list_zfs_pools \
+  curl  -k -X POST https://192.168.3.206:8443/smb/list_zfs_pools \
     -H "Authorization: Bearer $TOKEN"
 ```
 
 create zfs pool
 ```
-  curl -k -X POST https://192.168.3.248:8443/smb/create_zfs_share \
+  curl -k -X POST https://192.168.3.206:8443/smb/create_zfs_share \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer $TOKEN" \
       -d '{
@@ -175,21 +175,21 @@ create zfs pool
 
 list zfs shares
 ```
-  curl -k -X POST https://192.168.3.248:8443/smb/list_zfs_shares \
+  curl -k -X POST https://192.168.3.206:8443/smb/list_zfs_shares \
       -H "Authorization: Bearer $TOKEN"
 
 ```
 
 list directory shares
 ```
-  curl -k -X POST https://192.168.3.248:8443/smb/list_dir_shares \
+  curl -k -X POST https://192.168.3.206:8443/smb/list_dir_shares \
       -H "Authorization: Bearer $TOKEN"
 
 ```
 
 remove directory share
 ```
-  curl -k -X POST https://192.168.3.248:8443/smb/remove_dir_share \
+  curl -k -X POST https://192.168.3.206:8443/smb/remove_dir_share \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer $TOKEN" \
       -d '{
@@ -199,7 +199,7 @@ remove directory share
 
 remove directory share
 ```
-  curl -k -X POST https://192.168.3.248:8443/smb/remove_zfs_share \
+  curl -k -X POST https://192.168.3.206:8443/smb/remove_zfs_share \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer $TOKEN" \
       -d '{
@@ -209,13 +209,13 @@ remove directory share
 
 Docker list images
 ```
-  curl -k -X GET https://192.168.3.248:8443/docker/get_images \
+  curl -k -X GET https://192.168.3.206:8443/docker/get_images \
       -H "Authorization: Bearer $TOKEN"
 ```
 
 Docker pull image
 ```
-  curl -k -X POST https://192.168.3.248:8443/docker/pull_image/start \
+  curl -k -X POST https://192.168.3.206:8443/docker/pull_image/start \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{"image_name": "postgres:16.13-trixie"}'
@@ -223,20 +223,20 @@ Docker pull image
 
 Docker pull image progress
 ```
-  curl -k -X GET https://192.168.3.248:8443/docker/pull_image/task/0b319bfc-128d-408c-97b2-2b965e20d7f9 \
+  curl -k -X GET https://192.168.3.206:8443/docker/pull_image/task/0b319bfc-128d-408c-97b2-2b965e20d7f9 \
     -H "Authorization: Bearer $TOKEN" 
 ```
 
 delete image by id
 ```
-  curl -k -X DELETE https://192.168.3.248:8443/docker/delete_image/1a1e63136420 \
+  curl -k -X DELETE https://192.168.3.206:8443/docker/delete_image/1a1e63136420 \
     -H "Authorization: Bearer $TOKEN" 
 ```
 
 
 create container
 ```
-  curl -k -X POST https://192.168.3.248:8443/docker/create_container \
+  curl -k -X POST https://192.168.3.206:8443/docker/create_container \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
@@ -260,7 +260,7 @@ create container
 
   请求：
 ```
-  curl -k -X POST https://192.168.3.248:8443/docker/setting/registry \
+  curl -k -X POST https://192.168.3.206:8443/docker/setting/registry \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
@@ -271,12 +271,12 @@ create container
 ```
   2. GET /docker/setting/registry - 获取所有镜像源
 ```
-  curl -k https://192.168.3.248:8443/docker/setting/registry \
+  curl -k https://192.168.3.206:8443/docker/setting/registry \
     -H "Authorization: Bearer $TOKEN"
 ```
   3. DELETE /docker/setting/registry - 删除镜像源
 ```
-  curl -k -X DELETE https://192.168.3.248:8443/docker/setting/registry \
+  curl -k -X DELETE https://192.168.3.206:8443/docker/setting/registry \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
@@ -314,9 +314,9 @@ Mirror
 Volume setting
 ```
 export TOKEN=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzczNzk5OTQ0LCJleHAiOjE3NzYzOTE5NDQsImp0aSI6IjhkNjNhNGMxLTdhNWYtNDY5OS1iMWYzLWFlOWRiYWZjNzczMiJ9.9_8T9z3CmT9noSz9kHGf1f0EOvAt90bVCaU2Tj7CzJg
-  curl -k https://192.168.3.248:8443/docker/containers \
+  curl -k https://192.168.3.206:8443/docker/containers \
     -H "Authorization: Bearer $TOKEN"
-export  HOST="https://192.168.3.248:8443"
+export  HOST="https://192.168.3.206:8443"
 
   # 添加数据卷
   curl -k -X POST "${HOST}/docker/setting/volume" \
@@ -342,7 +342,7 @@ export  HOST="https://192.168.3.248:8443"
 
 Podman compose
 ```
-  curl -k -X POST https://192.168.3.248:8443/docker/compose_up \
+  curl -k -X POST https://192.168.3.206:8443/docker/compose_up \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{"content":"services:\n  db:\n    image: postgres:15\n    environment:\n      POSTGRES_PASSWORD: secret\n    volumes:\n      - db_data:/var/lib/postgresql/data\n  web:\n    image: my
@@ -351,11 +351,11 @@ Podman compose
 
 
 
-  curl -k https://192.168.3.248:8443/docker/compose_list \
+  curl -k https://192.168.3.206:8443/docker/compose_list \
     -H "Authorization: Bearer $TOKEN"
 
 
-  curl -k -X DELETE https://192.168.3.248:8443/docker/compose_down \
+  curl -k -X DELETE https://192.168.3.206:8443/docker/compose_down \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
@@ -364,7 +364,7 @@ Podman compose
 
   删除项目及卷
 
-  curl -k -X DELETE https://192.168.3.248:8443/docker/compose_down \
+  curl -k -X DELETE https://192.168.3.206:8443/docker/compose_down \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
@@ -374,7 +374,7 @@ Podman compose
 
   删除项目、卷和镜像
 
-  curl -k -X DELETE https://192.168.3.248:8443/docker/compose_down \
+  curl -k -X DELETE https://192.168.3.206:8443/docker/compose_down \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
@@ -383,7 +383,7 @@ Podman compose
       "remove_images": true
     }'
 
-  curl -k -X DELETE "https://192.168.3.248:8443/docker/compose/delete/myapp" \
+  curl -k -X DELETE "https://192.168.3.206:8443/docker/compose/delete/myapp" \
     -H "Authorization: Bearer ${TOKEN}"
 
 
@@ -392,23 +392,23 @@ Podman compose
 pod
 ```
   # 列出 pods
-  curl -k "https://192.168.3.248:8443/podman/pod/list" \
+  curl -k "https://192.168.3.206:8443/podman/pod/list" \
     -H "Authorization: Bearer ${TOKEN}"
 
   # 启动 pod
-  curl -k -X POST "https://192.168.3.248:8443/podman/pod/start/my-pod" \
+  curl -k -X POST "https://192.168.3.206:8443/podman/pod/start/my-pod" \
     -H "Authorization: Bearer ${TOKEN}"
 
   # 停止 pod
-  curl -k -X POST "https://192.168.3.248:8443/podman/pod/stop/my-pod" \
+  curl -k -X POST "https://192.168.3.206:8443/podman/pod/stop/my-pod" \
     -H "Authorization: Bearer ${TOKEN}"
 
   # 重启 pod
-  curl -k -X POST "https://192.168.3.248:8443/podman/pod/restart/my-pod" \
+  curl -k -X POST "https://192.168.3.206:8443/podman/pod/restart/my-pod" \
     -H "Authorization: Bearer ${TOKEN}"
 
   # 删除 pod (强制)
-  curl -k -X DELETE "https://192.168.3.248:8443/podman/pod/remove/my-pod" \
+  curl -k -X DELETE "https://192.168.3.206:8443/podman/pod/remove/my-pod" \
     -H "Authorization: Bearer ${TOKEN}"
 
 ```
@@ -418,10 +418,10 @@ ZFS set bootfs & bootfs
 zpool set bootfs=one-pool/ROOT/zuti-260225_NEW one-pool
 root@onenas:~# findmnt -n -o SOURCE /
 
-  curl -k "https://192.168.3.248:8443/zfs/bootfs" \
+  curl -k "https://192.168.3.206:8443/zfs/bootfs" \
     -H "Authorization: Bearer ${TOKEN}"
 
-  curl -k -X POST "https://192.168.3.248:8443/zfs/set_bootfs" \
+  curl -k -X POST "https://192.168.3.206:8443/zfs/set_bootfs" \
       -H "Authorization: Bearer ${TOKEN}" \
       -H "Content-Type: application/json" \
       -d '{
@@ -437,7 +437,7 @@ root@onenas:~# findmnt -n -o SOURCE /
   • 权限: 需要 JWT 认证 + 管理员权限
   • 命令: systemctl reboot
 ```
-  curl -k -X POST "https://192.168.3.248:8443/zfs/reboot" -H "Authorization: Bearer ${TOKEN}"
+  curl -k -X POST "https://192.168.3.206:8443/zfs/reboot" -H "Authorization: Bearer ${TOKEN}"
 ```
   2. 关闭系统 API
 
@@ -445,18 +445,27 @@ root@onenas:~# findmnt -n -o SOURCE /
   • 权限: 需要 JWT 认证 + 管理员权限
   • 命令: systemctl poweroff
 ```
-  curl -k -X POST "https://192.168.3.248:8443/zfs/shutdown" \
+  curl -k -X POST "https://192.168.3.206:8443/zfs/shutdown" \
       -H "Authorization: Bearer ${TOKEN}"
 ```
 
 Clone
 
 ```
-  curl -k -X POST "https://192.168.3.248:8443/zfs/clone" \
+  curl -k -X POST "https://192.168.3.206:8443/zfs/clone" \
       -H "Authorization: Bearer ${TOKEN}" \
       -H "Content-Type: application/json" \
       -d '{
-          "new_name": "zuti-260225_NEW",
-          "dataset": "one-pool/ROOT/zuti-260225"
+          "new_name": "zuti260303",
+          "dataset": "one-pool/ROOT/zuti-260303"
       }'
+```
+
+Prompt
+```
+  curl -k -X POST https://192.168.3.206:8443/zfs/prompt \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"dataset": "one-pool/ROOT/zuti260303"}'
+
 ```

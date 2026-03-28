@@ -48,6 +48,19 @@ async fn main() -> std::io::Result<()> {
     // 初始化日志
     logger::init_logger();
     
+    // 检查外部依赖命令
+    match utils::check_external_commands() {
+        Ok(()) => {
+            println!("All external commands are available");
+        }
+        Err(missing) => {
+            eprintln!("\x1b[31mWarning: The following external commands are missing:\x1b[0m");
+            for cmd in &missing {
+                eprintln!("  - {}", cmd);
+            }
+        }
+    }
+    
     let env_path = Path::new("/etc/zuti/.env");
     if env_path.exists() {
         log::info!("Loading env from: {}", env_path.display());
