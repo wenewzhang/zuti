@@ -844,6 +844,87 @@ pub async fn destroy_dataset(
     }
 }
 
+/// Dataset 依赖信息结构体
+#[derive(Serialize)]
+pub struct DatasetDependInfo {
+    pub name: String,
+    pub mountpoint: String,
+    pub canmount: String,
+    pub origin: String,
+}
+
+/// Dataset 依赖列表响应结构体
+#[derive(Serialize)]
+pub struct DatasetDependsResponse {
+    pub success: bool,
+    pub data: Option<Vec<DatasetDependInfo>>,
+    pub error: Option<String>,
+}
+
+/// 获取 zfs list -r -o name,mountpoint,canmount,origin 命令的输出
+fn get_zfs_depends_output() -> Option<String> {
+    Command::new("zfs")
+        .args(["list", "-r", "-o", "name,mountpoint,canmount,origin", "-H"])
+        .output()
+        .ok()
+        .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// 从 zfs list 输出中解析依赖信息
+fn parse_dataset_depends(output: &str) -> Vec<DatasetDependInfo> {
+    let mut result = Vec::new();
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // 解析行: "name\tmountpoint\tcanmount\torigin"
+        let parts: Vec<&str> = trimmed.split('\t').collect();
+        if parts.len() >= 4 {
+            result.push(DatasetDependInfo {
+                name: parts[0].to_string(),
+                mountpoint: parts[1].to_string(),
+                canmount: parts[2].to_string(),
+                origin: parts[3].to_string(),
+            });
+        }
+    }
+
+    result
+}
+
+/// zfs/depends API - 获取所有 ZFS datasets 的依赖信息（需要 JWT 认证，普通用户可用）
+#[get("/zfs/depends")]
+pub async fn get_dataset_depends(req: HttpRequest, pool: web::Data<crate::DbPool>) -> impl Responder {
+    // 验证 JWT token（普通用户即可）
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
+    // 执行 zfs list 命令
+    let output = match get_zfs_depends_output() {
+        Some(output) => output,
+        None => {
+            return HttpResponse::InternalServerError().json(DatasetDependsResponse {
+                success: false,
+                data: None,
+                error: Some("Failed to execute zfs list command".to_string()),
+            });
+        }
+    };
+
+    // 解析输出
+    let datasets = parse_dataset_depends(&output);
+
+    HttpResponse::Ok().json(DatasetDependsResponse {
+        success: true,
+        data: Some(datasets),
+        error: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -472,7 +472,7 @@ Prompt
 
 All Datasets
 ```
-  curl -k -X GET https://192.168.3.206:8443/zfs/datasets \
+  curl -k -X GET https://192.168.3.203:8443/zfs/datasets \
       -H "Authorization: Bearer $TOKEN"
 
 ```
@@ -481,7 +481,14 @@ Destroy Dataset
 ```
   curl -k -X POST https://192.168.3.203:8443/zfs/destroy \
       -H "Content-Type: application/json" \
-      -H "Authorization: Bearer Bearer ${TOKEN}" \
-      -d '{"dataset": "one-pool/ROOT/zuti-old"}'
+      -H "Authorization: Bearer $TOKEN" \
+      -d '{"dataset": "one-pool/ROOT/zuti260303@zuti260303"}'
+
+```
+
+Depends
+```
+  curl -k -X GET https://192.168.3.203:8443/zfs/depends \
+      -H "Authorization: Bearer $TOKEN"
 
 ```
