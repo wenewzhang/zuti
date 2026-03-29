@@ -1,5 +1,58 @@
 use std::process::Command;
 
+/// Dataset 详细信息结构体
+#[derive(Debug, Clone)]
+pub struct DatasetDetail {
+    pub name: String,
+    pub used: String,
+    pub avail: String,
+    pub refer: String,
+    pub mountpoint: String,
+}
+
+/// 获取 zfs list -t all 命令的输出
+fn get_zfs_list_all_output() -> Option<String> {
+    Command::new("zfs")
+        .args(["list", "-t", "all", "-H"])
+        .output()
+        .ok()
+        .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// 从 zfs list -t all 输出中解析所有 datasets
+fn parse_all_datasets(output: &str) -> Vec<DatasetDetail> {
+    let mut result = Vec::new();
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // 解析行: "name\tused\tavail\trefer\tmountpoint"
+        let parts: Vec<&str> = trimmed.split('\t').collect();
+        if parts.len() >= 5 {
+            result.push(DatasetDetail {
+                name: parts[0].to_string(),
+                used: parts[1].to_string(),
+                avail: parts[2].to_string(),
+                refer: parts[3].to_string(),
+                mountpoint: parts[4].to_string(),
+            });
+        }
+    }
+
+    result
+}
+
+/// 获取所有 ZFS datasets (包括 snapshots 和 volumes)
+pub fn get_datasets() -> Vec<DatasetDetail> {
+    match get_zfs_list_all_output() {
+        Some(output) => parse_all_datasets(&output),
+        None => Vec::new(),
+    }
+}
+
 /// 获取 zpool status 命令的原始输出
 fn get_zpool_status_output() -> Option<String> {
     Command::new("zpool")
@@ -95,5 +148,26 @@ mod tests {
         let input = "nvme1n2    ONLINE";
         let result = parse_zfs_disks(input);
         assert_eq!(result, vec!["nvme1n2"]);
-    }    
-}    
+    }
+
+    #[test]
+    fn test_parse_all_datasets() {
+        let input = "one-pool\t10G\t90G\t1G\t/one-pool\none-pool/ROOT\t2G\t90G\t1M\t/one-pool/ROOT\none-pool/ROOT/zuti\t8G\t90G\t8G\t/\none-pool@snapshot1\t100M\t-\t1G\t-\n";
+        let result = parse_all_datasets(input);
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0].name, "one-pool");
+        assert_eq!(result[0].used, "10G");
+        assert_eq!(result[0].avail, "90G");
+        assert_eq!(result[0].refer, "1G");
+        assert_eq!(result[0].mountpoint, "/one-pool");
+        assert_eq!(result[3].name, "one-pool@snapshot1");
+        assert_eq!(result[3].mountpoint, "-");
+    }
+
+    #[test]
+    fn test_parse_all_datasets_empty() {
+        let input = "";
+        let result = parse_all_datasets(input);
+        assert!(result.is_empty());
+    }
+}

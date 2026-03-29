@@ -3,12 +3,43 @@ use serde::{Deserialize, Serialize};
 use std::process::Command;
 
 use crate::utils::admin::{validate_token_with_db, verify_admin_access};
+use crate::disk::zfs::DatasetDetail;
 
 /// Dataset 信息结构体
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DatasetInfo {
     pub name: String,
     pub mountpoint: String,
+}
+
+/// Dataset 详细信息响应结构体
+#[derive(Serialize)]
+pub struct DatasetDetailInfo {
+    pub name: String,
+    pub used: String,
+    pub avail: String,
+    pub refer: String,
+    pub mountpoint: String,
+}
+
+impl From<DatasetDetail> for DatasetDetailInfo {
+    fn from(d: DatasetDetail) -> Self {
+        Self {
+            name: d.name,
+            used: d.used,
+            avail: d.avail,
+            refer: d.refer,
+            mountpoint: d.mountpoint,
+        }
+    }
+}
+
+/// Datasets 响应结构体
+#[derive(Serialize)]
+pub struct DatasetsResponse {
+    pub success: bool,
+    pub data: Option<Vec<DatasetDetailInfo>>,
+    pub error: Option<String>,
 }
 
 /// Bootfs 数据结构体
@@ -24,6 +55,36 @@ pub struct BootfsResponse {
     pub success: bool,
     pub data: Option<BootfsData>,
     pub error: Option<String>,
+}
+
+/// zfs/datasets API - 获取所有 ZFS datasets（包括 snapshots 和 volumes，需要 JWT 认证）
+#[get("/zfs/datasets")]
+pub async fn get_datasets(req: HttpRequest, pool: web::Data<crate::DbPool>) -> impl Responder {
+    // 验证 JWT token
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
+    // 调用 disk/zfs 模块的 get_datasets 函数
+    let datasets = crate::disk::zfs::get_datasets();
+
+    if datasets.is_empty() {
+        // 可能是命令执行失败或没有 datasets
+        return HttpResponse::Ok().json(DatasetsResponse {
+            success: true,
+            data: Some(Vec::new()),
+            error: None,
+        });
+    }
+
+    // 转换为 API 响应格式
+    let dataset_infos: Vec<DatasetDetailInfo> = datasets.into_iter().map(|d| d.into()).collect();
+
+    HttpResponse::Ok().json(DatasetsResponse {
+        success: true,
+        data: Some(dataset_infos),
+        error: None,
+    })
 }
 
 /// 获取 zfs list 命令的输出
