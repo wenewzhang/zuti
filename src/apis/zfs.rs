@@ -750,6 +750,100 @@ pub async fn promote_dataset(
     }
 }
 
+// zfs destroy 请求结构体
+#[derive(Deserialize)]
+pub struct DestroyDatasetRequest {
+    pub dataset: String,  // 例如: "one-pool/ROOT/zuti-260225_NEW"
+}
+
+// zfs destroy 响应结构体
+#[derive(Serialize)]
+pub struct DestroyDatasetResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// zfs/destroy API - 删除 ZFS dataset（需要 JWT 认证，仅管理员可用）
+#[post("/zfs/destroy")]
+pub async fn destroy_dataset(
+    req: HttpRequest,
+    destroy_req: web::Json<DestroyDatasetRequest>,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let dataset = &destroy_req.dataset;
+
+    // 2. 验证 dataset 名称合法性
+    // ZFS dataset 名称允许: 字母、数字、下划线、连字符、点、斜杠、@（用于 snapshot）
+    if !dataset.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/' || c == '@') {
+        return HttpResponse::BadRequest().json(DestroyDatasetResponse {
+            success: false,
+            message: "Invalid dataset name format".to_string(),
+            error: Some("Dataset name must contain only alphanumeric characters, underscores, hyphens, dots, slashes, or @".to_string()),
+        });
+    }
+
+    // 3. 检查 dataset 是否存在
+    let check_output = match Command::new("zfs")
+        .args(["list", "-H", dataset])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(DestroyDatasetResponse {
+                success: false,
+                message: "Failed to check dataset existence".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    if !check_output.status.success() {
+        let stderr = String::from_utf8_lossy(&check_output.stderr);
+        return HttpResponse::BadRequest().json(DestroyDatasetResponse {
+            success: false,
+            message: format!("Dataset '{}' does not exist", dataset),
+            error: Some(stderr.to_string()),
+        });
+    }
+
+    // 4. 执行 zfs destroy 命令
+    let output = match Command::new("zfs")
+        .args(["destroy", dataset])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(DestroyDatasetResponse {
+                success: false,
+                message: "Failed to execute zfs destroy command".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    if output.status.success() {
+        HttpResponse::Ok().json(DestroyDatasetResponse {
+            success: true,
+            message: format!("Successfully destroyed dataset '{}'", dataset),
+            error: None,
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        HttpResponse::InternalServerError().json(DestroyDatasetResponse {
+            success: false,
+            message: format!("Failed to destroy dataset '{}'", dataset),
+            error: Some(stderr.to_string()),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
