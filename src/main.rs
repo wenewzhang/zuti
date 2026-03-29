@@ -90,9 +90,9 @@ async fn main() -> std::io::Result<()> {
         match users.first::<User>(&mut conn).optional() {
             Ok(Some(first_user)) => {
                 if utils::check_system_user(&first_user.name) {
-                    println!("Startup check passed: user '{}' exists in Linux system", first_user.name);
+                    println!("Startup check passed: user 'xxx' exists in Linux system");
                 } else {
-                    eprintln!("\x1b[31mStartup check warning: user '{}' does NOT exist in Linux system\x1b[0m", first_user.name);
+                    eprintln!("\x1b[31mStartup check warning: user 'xxx' does NOT exist in Linux system\x1b[0m");
                 }
             }
             Ok(None) => {
