@@ -162,6 +162,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(pool.clone()))
             .service(index)
             .service(ping)
+            .service(apis::users::has_admin)
             .service(apis::users::create_admin_user)
             .service(apis::users::add_user)
             .service(apis::users::login)

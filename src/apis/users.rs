@@ -1,4 +1,4 @@
-use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
+use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
 use chrono::{Duration, Utc};
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -37,6 +37,40 @@ pub struct CreateUserResponse {
     pub error: Option<String>,
 }
 
+// HasAdmin 响应结构体
+#[derive(Serialize)]
+pub struct HasAdminResponse {
+    pub has_admin: bool,
+}
+
+// 检查是否存在 admin 用户
+#[get("/has_admin")]
+pub async fn has_admin(pool: web::Data<DbPool>) -> impl Responder {
+    let pool = pool.get_ref().clone();
+    
+    let result: Result<bool, String> = web::block(move || {
+        let mut conn = pool.get().expect("Couldn't get db connection from pool");
+        
+        use crate::schema::users::dsl::*;
+        
+        let admin_exists: bool = users
+            .filter(type_.eq("admin"))
+            .first::<User>(&mut conn)
+            .optional()
+            .map_err(|e| format!("Database error: {}", e))?
+            .is_some();
+        
+        Ok(admin_exists)
+    })
+    .await
+    .unwrap();
+    
+    match result {
+        Ok(admin_exists) => HttpResponse::Ok().json(HasAdminResponse { has_admin: admin_exists }),
+        Err(_e) => HttpResponse::InternalServerError().json(HasAdminResponse { has_admin: false }),
+    }
+}
+
 // 创建用户
 #[post("/admin_user")]
 pub async fn create_admin_user(pool: web::Data<DbPool>, new_user: web::Json<NewUser>) -> impl Responder {
@@ -71,9 +105,10 @@ pub async fn create_admin_user(pool: web::Data<DbPool>, new_user: web::Json<NewU
         }
         
         // 只插入用户名和类型，不存储密码
+        // type_ 固定为 admin，不接受 new_user 中的 type
         let user_insert = UserInsert {
             name: user_data.name,
-            type_: user_data.type_,
+            type_: "admin".to_string(),
         };
         
         diesel::insert_into(users)
