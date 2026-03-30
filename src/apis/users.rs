@@ -501,7 +501,11 @@ fn get_samba_users() -> Vec<String> {
 }
 
 #[get("/list_users")]
-pub async fn list_users(pool: web::Data<DbPool>) -> impl Responder {
+pub async fn list_users(req: HttpRequest, pool: web::Data<DbPool>) -> impl Responder {
+        // 验证 JWT token
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
     let pool = pool.get_ref().clone();
 
     let result: Result<(Vec<(String, String)>, Vec<String>), String> = web::block(move || {

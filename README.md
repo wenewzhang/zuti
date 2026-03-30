@@ -1,6 +1,6 @@
 export token
 ```
-export TOKEN=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzc0NjkwODM1LCJleHAiOjE3NzcyODI4MzUsImp0aSI6ImVjNzQ0YTMyLTY2MjctNGQ4Zi1iYzViLWE5ZjMxZjZhZWIzNiJ9.2VkalCXD_DxkNj-Bu5OSiRtblKipF7QFEoYN2LIwZt0
+export TOKEN=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzc0ODU3MTA4LCJleHAiOjE3Nzc0NDkxMDgsImp0aSI6IjFmOWYxODU0LWY4ZGEtNDc4Ny1hYzg5LWNjNzc0M2UxYWEwNiJ9.Vu4dykx99OZhni_qwV4dNC-yvrVK4m6oVjikfzvWTSA
 ```
 
 创建用户
@@ -85,6 +85,13 @@ add user
       "user_type": "share"
     }'
 
+```
+
+List All user
+```
+  curl -k -X GET https://192.168.3.203:8443/list_users \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $TOKEN" \
 ```
 
 logout
