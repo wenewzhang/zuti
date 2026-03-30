@@ -525,14 +525,33 @@ pub async fn list_users(req: HttpRequest, pool: web::Data<DbPool>) -> impl Respo
 
     match result {
         Ok((db_users, samba_users)) => {
-            let user_list: Vec<UserInfo> = db_users
-                .into_iter()
-                .map(|(user_name, user_type)| UserInfo {
-                    name: user_name.clone(),
+            let mut user_list: Vec<UserInfo> = Vec::new();
+
+            // 记录已经在列表中的用户名，用于去重
+            let mut processed_names = std::collections::HashSet::new();
+
+            // 1. 处理数据库中的用户
+            for (user_name, user_type) in db_users {
+                let is_in_samba = samba_users.contains(&user_name);
+                processed_names.insert(user_name.clone());
+                
+                user_list.push(UserInfo {
+                    name: user_name,
                     type_: user_type,
-                    in_samba: samba_users.contains(&user_name),
-                })
-                .collect();
+                    in_samba: is_in_samba,
+                });
+            }
+
+            // 2. 处理仅在 Samba 中存在的用户（串联逻辑）
+            for s_user in samba_users {
+                if !processed_names.contains(&s_user) {
+                    user_list.push(UserInfo {
+                        name: s_user,
+                        type_: "samba".to_string(), // 标记类型为 samba
+                        in_samba: true,
+                    });
+                }
+            }            
 
             HttpResponse::Ok().json(ListUsersResponse {
                 success: true,
