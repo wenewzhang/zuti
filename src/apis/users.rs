@@ -95,6 +95,7 @@ pub async fn create_admin_user(pool: web::Data<DbPool>, new_user: web::Json<NewU
         
         // 检查 users 表中是否已有数据，如果有则不再插入
         let user_exists: bool = users
+            .filter(type_.eq("admin"))
             .first::<User>(&mut conn)
             .optional()
             .map_err(|_| (500, "Error checking existing user".to_string()))?
