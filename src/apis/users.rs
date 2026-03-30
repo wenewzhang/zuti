@@ -465,3 +465,79 @@ pub async fn login(pool: web::Data<DbPool>, login_req: web::Json<LoginRequest>) 
         }),
     }
 }
+
+#[derive(Serialize, Clone)]
+pub struct UserInfo {
+    pub name: String,
+    pub type_: String,
+    pub in_samba: bool,
+}
+
+#[derive(Serialize)]
+pub struct ListUsersResponse {
+    pub success: bool,
+    pub users: Vec<UserInfo>,
+}
+
+fn get_samba_users() -> Vec<String> {
+    let output = Command::new("pdbedit")
+        .args(["-L"])
+        .output();
+
+    match output {
+        Ok(result) => {
+            if result.status.success() {
+                let stdout = String::from_utf8_lossy(&result.stdout);
+                stdout
+                    .lines()
+                    .filter_map(|line| line.split(':').next().map(|s| s.to_string()))
+                    .collect()
+            } else {
+                vec![]
+            }
+        }
+        Err(_) => vec![],
+    }
+}
+
+#[get("/list_users")]
+pub async fn list_users(pool: web::Data<DbPool>) -> impl Responder {
+    let pool = pool.get_ref().clone();
+
+    let result: Result<(Vec<(String, String)>, Vec<String>), String> = web::block(move || {
+        let mut conn = pool.get().map_err(|e| format!("Database connection error: {}", e))?;
+
+        let db_users: Vec<(String, String)> = users
+            .select((name, type_))
+            .load::<(String, String)>(&mut conn)
+            .map_err(|e| format!("Database query error: {}", e))?;
+
+        let samba_users = get_samba_users();
+
+        Ok((db_users, samba_users))
+    })
+    .await
+    .unwrap();
+
+    match result {
+        Ok((db_users, samba_users)) => {
+            let user_list: Vec<UserInfo> = db_users
+                .into_iter()
+                .map(|(user_name, user_type)| UserInfo {
+                    name: user_name.clone(),
+                    type_: user_type,
+                    in_samba: samba_users.contains(&user_name),
+                })
+                .collect();
+
+            HttpResponse::Ok().json(ListUsersResponse {
+                success: true,
+                users: user_list,
+            })
+        }
+        Err(_e) => HttpResponse::InternalServerError().json(ListUsersResponse {
+            success: false,
+            users: vec![],
+        }),
+    }
+}
