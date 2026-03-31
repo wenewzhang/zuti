@@ -100,6 +100,15 @@ add user
 
 ```
 
+Delete user
+```
+  curl -k -X POST https://<host>:8443/delete_user \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer <admin_token>" \
+      -d '{"username": "testuser"}'
+
+```
+
 List All user
 ```
   curl -k -X GET https://192.168.3.203:8443/list_users \

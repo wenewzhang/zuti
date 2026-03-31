@@ -700,6 +700,158 @@ fn change_system_password(username: &str, new_password: &str) -> Result<(), Stri
     Ok(())
 }
 
+// 删除用户请求结构体
+#[derive(Deserialize)]
+pub struct DeleteUserRequest {
+    pub username: String,
+}
+
+// 删除用户响应结构体
+#[derive(Serialize)]
+pub struct DeleteUserResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// 删除 Linux 系统用户
+fn delete_system_user(username: &str) -> Result<(), String> {
+    let output = Command::new("userdel")
+        .args(["-r", username])  // -r 选项会同时删除用户主目录
+        .output();
+
+    match output {
+        Ok(result) => {
+            if result.status.success() {
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                Err(format!("Failed to delete system user: {}", stderr))
+            }
+        }
+        Err(e) => Err(format!("Command error: {}", e)),
+    }
+}
+
+/// 删除用户 API（仅 admin 可调用）
+/// 
+/// 传入用户名，如果不为 admin 类型，则在 Linux 系统和数据库中删除该用户
+#[post("/delete_user")]
+pub async fn delete_user(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    del_req: web::Json<DeleteUserRequest>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _admin_username = match utils::verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let target_username = &del_req.username;
+
+    // 2. 验证用户名非空
+    if target_username.is_empty() {
+        return HttpResponse::BadRequest().json(DeleteUserResponse {
+            success: false,
+            message: "Username cannot be empty".to_string(),
+            error: Some("Username is required".to_string()),
+        });
+    }
+
+    // 3. 禁止删除 root 用户
+    if target_username == crate::utils::consts::FORBIDDEN_USERNAME {
+        return HttpResponse::Forbidden().json(DeleteUserResponse {
+            success: false,
+            message: format!("Cannot delete user '{}'", target_username),
+            error: Some("Forbidden username".to_string()),
+        });
+    }
+
+    // 4. 查询数据库获取用户信息和类型
+    let pool_clone = pool.get_ref().clone();
+    let target_user_clone = target_username.clone();
+
+    let user_query: Result<Option<User>, String> = web::block(move || {
+        let mut conn = pool_clone.get().map_err(|e| format!("Database connection error: {}", e))?;
+
+        let existing: Option<User> = users
+            .filter(name.eq(&target_user_clone))
+            .first::<User>(&mut conn)
+            .optional()
+            .map_err(|e| format!("Database query error: {}", e))?;
+
+        Ok(existing)
+    })
+    .await
+    .unwrap();
+
+    let user = match user_query {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            return HttpResponse::NotFound().json(DeleteUserResponse {
+                success: false,
+                message: "User not found".to_string(),
+                error: Some(format!("User '{}' does not exist in database", target_username)),
+            });
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(DeleteUserResponse {
+                success: false,
+                message: "Database error".to_string(),
+                error: Some(e),
+            });
+        }
+    };
+
+    // 5. 检查用户类型是否为 admin，admin 用户不能删除
+    if user.type_ == crate::utils::consts::USER_TYPE_ADMIN {
+        return HttpResponse::Forbidden().json(DeleteUserResponse {
+            success: false,
+            message: "Cannot delete admin user".to_string(),
+            error: Some(format!("User '{}' is an admin and cannot be deleted", target_username)),
+        });
+    }
+
+    // 6. 删除 Linux 系统用户
+    if let Err(e) = delete_system_user(target_username) {
+        return HttpResponse::InternalServerError().json(DeleteUserResponse {
+            success: false,
+            message: "Failed to delete system user".to_string(),
+            error: Some(e),
+        });
+    }
+
+    // 7. 从数据库中删除用户
+    let pool_clone = pool.get_ref().clone();
+    let target_user_clone = target_username.clone();
+
+    let delete_result: Result<(), String> = web::block(move || {
+        let mut conn = pool_clone.get().map_err(|e| format!("Database connection error: {}", e))?;
+
+        diesel::delete(users.filter(name.eq(&target_user_clone)))
+            .execute(&mut conn)
+            .map_err(|e| format!("Failed to delete user from database: {}", e))?;
+
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    match delete_result {
+        Ok(_) => HttpResponse::Ok().json(DeleteUserResponse {
+            success: true,
+            message: format!("User '{}' deleted successfully", target_username),
+            error: None,
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(DeleteUserResponse {
+            success: false,
+            message: "System user deleted, but database delete failed".to_string(),
+            error: Some(e),
+        }),
+    }
+}
+
 #[get("/list_users")]
 pub async fn list_users(req: HttpRequest, pool: web::Data<DbPool>) -> impl Responder {
         // 验证 JWT token
