@@ -646,7 +646,7 @@ pub async fn change_admin_passwd(
 
     // 2. 验证旧密码是否正确
     if !utils::verify_password(&admin_username, old_password) {
-        return HttpResponse::Unauthorized().json(ChangePasswordResponse {
+        return HttpResponse::InternalServerError().json(ChangePasswordResponse {
             success: false,
             message: "Invalid old password".to_string(),
             error: Some("Old password verification failed".to_string()),

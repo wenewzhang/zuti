@@ -1,6 +1,6 @@
 export token
 ```
-export TOKEN=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzc0ODU3MTA4LCJleHAiOjE3Nzc0NDkxMDgsImp0aSI6IjFmOWYxODU0LWY4ZGEtNDc4Ny1hYzg5LWNjNzc0M2UxYWEwNiJ9.Vu4dykx99OZhni_qwV4dNC-yvrVK4m6oVjikfzvWTSA
+export TOKEN=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0IjoxNzc0OTI2ODgwLCJleHAiOjE3Nzc1MTg4ODAsImp0aSI6IjQ3ODNlMGU0LWNkYTgtNDdjNi1hMzgyLWI4NjJiZmRkMjk4YyJ9.M5_oKlwHWtW2Qb8rVFf-oeupFurMxF7_gRLJhh5r_Ms
 ```
 
 创建用户
@@ -9,12 +9,12 @@ curl -k -X POST https://192.168.3.203:8443/admin_user     -H "Content-Type: appl
 ```
 修改密码
 ```
-  curl -k -X POST https://<host>:8443/change_admin_passwd \
+  curl -k -X POST https://192.168.3.203:8443/change_admin_passwd \
       -H "Authorization: Bearer $TOKEN" \
       -H "Content-Type: application/json" \
       -d '{"old_password": "123321", "new_password": "123321"}'
 
-  curl -k -X POST https://<server>:8443/change_passwd \
+  curl -k -X POST https://192.168.3.203:8443/change_passwd \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{"user_id": "testuser", "new_password": "newpass123"}'
