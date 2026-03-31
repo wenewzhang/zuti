@@ -479,6 +479,117 @@ pub struct ListUsersResponse {
     pub users: Vec<UserInfo>,
 }
 
+// 管理员修改用户密码请求结构体
+#[derive(Deserialize)]
+pub struct ChangeUserPasswordRequest {
+    pub user_id: String,      // 用户名（id）
+    pub new_password: String, // 新密码
+}
+
+// 管理员修改用户密码响应结构体
+#[derive(Serialize)]
+pub struct ChangeUserPasswordResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// 管理员修改指定用户密码
+/// 
+/// 需要 admin access token，无需验证旧密码，直接修改系统用户密码
+#[post("/change_passwd")]
+pub async fn change_passwd(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    pwd_req: web::Json<ChangeUserPasswordRequest>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _admin_username = match utils::verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let target_user = &pwd_req.user_id;
+    let new_password = &pwd_req.new_password;
+
+    // 2. 验证用户名非空
+    if target_user.is_empty() {
+        return HttpResponse::BadRequest().json(ChangeUserPasswordResponse {
+            success: false,
+            message: "User ID cannot be empty".to_string(),
+            error: Some("User ID is required".to_string()),
+        });
+    }
+
+    // 3. 验证新密码非空
+    if new_password.is_empty() {
+        return HttpResponse::BadRequest().json(ChangeUserPasswordResponse {
+            success: false,
+            message: "New password cannot be empty".to_string(),
+            error: Some("New password is required".to_string()),
+        });
+    }
+
+    // 4. 检查目标用户是否存在于数据库
+    let pool_clone = pool.get_ref().clone();
+    let target_user_clone = target_user.clone();
+    
+    let user_exists: Result<bool, String> = web::block(move || {
+        let mut conn = pool_clone.get().map_err(|e| format!("Database connection error: {}", e))?;
+        
+        let existing: Option<User> = users
+            .filter(name.eq(&target_user_clone))
+            .first::<User>(&mut conn)
+            .optional()
+            .map_err(|e| format!("Database query error: {}", e))?;
+        
+        Ok(existing.is_some())
+    })
+    .await
+    .unwrap();
+
+    match user_exists {
+        Ok(false) => {
+            return HttpResponse::NotFound().json(ChangeUserPasswordResponse {
+                success: false,
+                message: "User not found".to_string(),
+                error: Some(format!("User '{}' does not exist in database", target_user)),
+            });
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ChangeUserPasswordResponse {
+                success: false,
+                message: "Database error".to_string(),
+                error: Some(e),
+            });
+        }
+        Ok(true) => {}
+    }
+
+    // 5. 检查系统用户是否存在
+    if !utils::check_system_user(target_user) {
+        return HttpResponse::NotFound().json(ChangeUserPasswordResponse {
+            success: false,
+            message: "System user not found".to_string(),
+            error: Some(format!("User '{}' does not exist in Linux system", target_user)),
+        });
+    }
+
+    // 6. 修改系统用户密码
+    match change_system_password(target_user, new_password) {
+        Ok(_) => HttpResponse::Ok().json(ChangeUserPasswordResponse {
+            success: true,
+            message: format!("Password for user '{}' changed successfully", target_user),
+            error: None,
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(ChangeUserPasswordResponse {
+            success: false,
+            message: "Failed to change password".to_string(),
+            error: Some(e),
+        }),
+    }
+}
+
 fn get_samba_users() -> Vec<String> {
     let output = Command::new("pdbedit")
         .args(["-L"])
@@ -498,6 +609,95 @@ fn get_samba_users() -> Vec<String> {
         }
         Err(_) => vec![],
     }
+}
+
+// 修改密码请求结构体
+#[derive(Deserialize)]
+pub struct ChangePasswordRequest {
+    pub old_password: String,
+    pub new_password: String,
+}
+
+// 修改密码响应结构体
+#[derive(Serialize)]
+pub struct ChangePasswordResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// 修改当前 admin 用户密码
+/// 
+/// 需要 admin access token，验证旧密码后修改系统用户密码
+#[post("/change_admin_passwd")]
+pub async fn change_admin_passwd(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    pwd_req: web::Json<ChangePasswordRequest>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let admin_username = match utils::verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let old_password = &pwd_req.old_password;
+    let new_password = &pwd_req.new_password;
+
+    // 2. 验证旧密码是否正确
+    if !utils::verify_password(&admin_username, old_password) {
+        return HttpResponse::Unauthorized().json(ChangePasswordResponse {
+            success: false,
+            message: "Invalid old password".to_string(),
+            error: Some("Old password verification failed".to_string()),
+        });
+    }
+
+    // 3. 修改系统用户密码
+    match change_system_password(&admin_username, new_password) {
+        Ok(_) => HttpResponse::Ok().json(ChangePasswordResponse {
+            success: true,
+            message: "Password changed successfully".to_string(),
+            error: None,
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(ChangePasswordResponse {
+            success: false,
+            message: "Failed to change password".to_string(),
+            error: Some(e),
+        }),
+    }
+}
+
+/// 修改 Linux 系统用户密码
+fn change_system_password(username: &str, new_password: &str) -> Result<(), String> {
+    let passwd_input = format!("{}:{}", username, new_password);
+    let output = Command::new("chpasswd")
+        .stdin(std::process::Stdio::piped())
+        .spawn();
+
+    match output {
+        Ok(mut child) => {
+            use std::io::Write;
+            if let Some(stdin) = child.stdin.as_mut() {
+                if let Err(e) = stdin.write_all(passwd_input.as_bytes()) {
+                    return Err(format!("Failed to write password: {}", e));
+                }
+            }
+            let result = child.wait_with_output();
+            match result {
+                Ok(output) => {
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        return Err(format!("Failed to change password: {}", stderr));
+                    }
+                }
+                Err(e) => return Err(format!("Failed to change password: {}", e)),
+            }
+        }
+        Err(e) => return Err(format!("Command error: {}", e)),
+    }
+
+    Ok(())
 }
 
 #[get("/list_users")]

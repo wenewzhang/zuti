@@ -7,6 +7,19 @@ export TOKEN=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJteWFkbWluIiwiaWF0Ij
 ```
 curl -k -X POST https://192.168.3.203:8443/admin_user     -H "Content-Type: application/json"     -d '{"name": "myadmin", "type_": "admin", "password":"123321"}'
 ```
+修改密码
+```
+  curl -k -X POST https://<host>:8443/change_admin_passwd \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{"old_password": "123321", "new_password": "123321"}'
+
+  curl -k -X POST https://<server>:8443/change_passwd \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"user_id": "testuser", "new_password": "newpass123"}'
+
+```
 
 登陆
 ```

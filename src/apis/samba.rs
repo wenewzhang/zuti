@@ -84,6 +84,21 @@ pub struct SmbAddUserResponse {
     pub error: Option<String>,
 }
 
+// Samba change password 请求结构体
+#[derive(Deserialize)]
+pub struct SmbChangePasswordRequest {
+    pub username: String,    // 要修改密码的用户名
+    pub new_password: String, // 新密码
+}
+
+// Samba change password 响应结构体
+#[derive(Serialize)]
+pub struct SmbChangePasswordResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
 // Samba delete user 请求结构体
 #[derive(Deserialize)]
 pub struct SmbDeleteUserRequest {
@@ -767,6 +782,143 @@ pub async fn smb_list_users(
         success: true,
         users: user_list,
         message: "Samba users listed successfully".to_string(),
+        error: None,
+    })
+}
+
+// smb_change_passwd API - 修改 Samba 用户密码（需要 admin 权限）
+#[post("/smb/change_passwd")]
+pub async fn smb_change_passwd(
+    req: HttpRequest,
+    user_req: web::Json<SmbChangePasswordRequest>,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _admin_username = match crate::utils::verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let username = &user_req.username;
+    let new_password = &user_req.new_password;
+
+    // 2. 验证用户名不为空
+    if username.is_empty() {
+        return HttpResponse::BadRequest().json(SmbChangePasswordResponse {
+            success: false,
+            message: "Username cannot be empty".to_string(),
+            error: Some("username is required".to_string()),
+        });
+    }
+
+    // 3. 验证用户名合法性（只允许字母数字、下划线）
+    if !username.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return HttpResponse::BadRequest().json(SmbChangePasswordResponse {
+            success: false,
+            message: "Invalid username format".to_string(),
+            error: Some("Username must contain only alphanumeric characters or underscores".to_string()),
+        });
+    }
+
+    // 4. 验证密码长度
+    if new_password.len() < 4 {
+        return HttpResponse::BadRequest().json(SmbChangePasswordResponse {
+            success: false,
+            message: "Password too short".to_string(),
+            error: Some("Password must be at least 4 characters".to_string()),
+        });
+    }
+
+    // 5. 检查用户是否存在于 Samba 用户列表中
+    match check_samba_user_exists(username) {
+        Ok(true) => {}
+        Ok(false) => {
+            return HttpResponse::BadRequest().json(SmbChangePasswordResponse {
+                success: false,
+                message: format!("Samba user '{}' does not exist", username),
+                error: Some("User not found in Samba user list".to_string()),
+            });
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SmbChangePasswordResponse {
+                success: false,
+                message: "Failed to check Samba user list".to_string(),
+                error: Some(e),
+            });
+        }
+    }
+
+    // 6. 修改 Samba 用户密码（smbpasswd -s）
+    let smbpasswd_input = format!("{}\n{}\n", new_password, new_password);
+    let output = Command::new("smbpasswd")
+        .args(["-s", username])
+        .stdin(std::process::Stdio::piped())
+        .spawn();
+
+    match output {
+        Ok(mut child) => {
+            use std::io::Write;
+            if let Some(stdin) = child.stdin.as_mut() {
+                if let Err(e) = stdin.write_all(smbpasswd_input.as_bytes()) {
+                    return HttpResponse::InternalServerError().json(SmbChangePasswordResponse {
+                        success: false,
+                        message: "Failed to change samba password".to_string(),
+                        error: Some(format!("{}", e)),
+                    });
+                }
+            }
+            let result = child.wait_with_output();
+            match result {
+                Ok(output) => {
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        return HttpResponse::InternalServerError().json(SmbChangePasswordResponse {
+                            success: false,
+                            message: "Failed to change samba password".to_string(),
+                            error: Some(format!("{}", stderr)),
+                        });
+                    }
+                }
+                Err(e) => {
+                    return HttpResponse::InternalServerError().json(SmbChangePasswordResponse {
+                        success: false,
+                        message: "Failed to change samba password".to_string(),
+                        error: Some(format!("{}", e)),
+                    });
+                }
+            }
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SmbChangePasswordResponse {
+                success: false,
+                message: "Failed to change samba password".to_string(),
+                error: Some(format!("{}", e)),
+            });
+        }
+    }
+
+    // 7. 同时修改 Linux 系统用户密码（保持同步）
+    let passwd_input = format!("{}:{}", username, new_password);
+    let output = Command::new("chpasswd")
+        .stdin(std::process::Stdio::piped())
+        .spawn();
+
+    match output {
+        Ok(mut child) => {
+            use std::io::Write;
+            if let Some(stdin) = child.stdin.as_mut() {
+                let _ = stdin.write_all(passwd_input.as_bytes());
+            }
+            let _ = child.wait_with_output();
+        }
+        Err(_) => {
+            // Linux 密码修改失败不返回错误，只记录 Samba 密码修改成功
+        }
+    }
+
+    HttpResponse::Ok().json(SmbChangePasswordResponse {
+        success: true,
+        message: format!("Password for user '{}' changed successfully", username),
         error: None,
     })
 }
