@@ -565,3 +565,11 @@ zpool import
     -H "Content-Type: application/json" \
     -d '{"poolname": "mypool", "dir": "/mnt/data", "mount_on_startup": true}'
 ```
+
+export pool
+```
+  curl -k -X POST https://192.168.3.203:8443/zfs/export_pool \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"poolname": "mypool"}'
+```

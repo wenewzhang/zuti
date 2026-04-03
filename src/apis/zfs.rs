@@ -1160,6 +1160,74 @@ pub async fn import_pool(
     }
 }
 
+/// Export Pool 请求结构体
+#[derive(Deserialize, Debug)]
+pub struct ExportPoolRequest {
+    pub poolname: String,
+}
+
+/// Export Pool 响应结构体
+#[derive(Serialize)]
+pub struct ExportPoolResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// zfs/export_pool API - 导出 ZFS pool（需要 JWT 认证）
+#[post("/zfs/export_pool")]
+pub async fn export_pool(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    export_req: web::Json<ExportPoolRequest>,
+) -> impl Responder {
+    // 验证 JWT token
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
+    let poolname = &export_req.poolname;
+
+    // 验证 poolname 不为空
+    if poolname.is_empty() {
+        return HttpResponse::BadRequest().json(ExportPoolResponse {
+            success: false,
+            message: "Pool name is required".to_string(),
+            error: Some("poolname cannot be empty".to_string()),
+        });
+    }
+
+    // 执行 zpool export 命令
+    match Command::new("zpool")
+        .args(["export", poolname])
+        .output()
+    {
+        Ok(output) => {
+            if output.status.success() {
+                HttpResponse::Ok().json(ExportPoolResponse {
+                    success: true,
+                    message: format!("Pool '{}' exported successfully", poolname),
+                    error: None,
+                })
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                HttpResponse::InternalServerError().json(ExportPoolResponse {
+                    success: false,
+                    message: format!("Failed to export pool '{}'", poolname),
+                    error: Some(stderr.to_string()),
+                })
+            }
+        }
+        Err(e) => {
+            HttpResponse::InternalServerError().json(ExportPoolResponse {
+                success: false,
+                message: format!("Failed to execute zpool export for '{}'", poolname),
+                error: Some(e.to_string()),
+            })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
