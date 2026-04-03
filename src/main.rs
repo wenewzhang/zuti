@@ -178,6 +178,7 @@ async fn main() -> std::io::Result<()> {
             .service(apis::disks::part_disk)
             .service(apis::disks::create_pool)
             .service(apis::disks::destroy_pool)
+            .service(apis::disks::label_clear)
             .service(apis::samba::smb_public_share)
             .service(apis::samba::smb_auth_share)
             .service(apis::samba::smb_add_user)

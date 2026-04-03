@@ -342,7 +342,7 @@ pub async fn part_disk(
         true
     } else if size_lower.ends_with('%') {
         size_lower[..size_lower.len()-1].parse::<u64>().is_ok()
-    } else if size_lower.ends_with('g') || size_lower.ends_with('m') || size_lower.ends_with('k') {
+    } else if size_lower.ends_with('g') || size_lower.ends_with('m') || size_lower.ends_with('t') {
         size_lower[..size_lower.len()-1].parse::<u64>().is_ok()
     } else {
         size_lower.parse::<u64>().is_ok()
@@ -352,7 +352,7 @@ pub async fn part_disk(
         return HttpResponse::BadRequest().json(PartDiskResponse {
             success: false,
             message: "Invalid size format".to_string(),
-            error: Some("Size must be like '10G', '500M', '100%' or '0' (for remaining space)".to_string()),
+            error: Some("Size must be like '10G', '500M', '10T', '100%' or '0' (for remaining space)".to_string()),
         });
     }
 
@@ -930,6 +930,77 @@ pub async fn destroy_pool(
             success: false,
             message: format!("Failed to destroy ZFS pool '{}'", pool_name),
             error: Some(destroy_stderr.to_string()),
+        })
+    }
+}
+
+// label_clear 请求结构体
+#[derive(Deserialize)]
+pub struct LabelClearRequest {
+    pub partition_name: String,
+}
+
+// label_clear 响应结构体
+#[derive(Serialize)]
+pub struct LabelClearResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+// label_clear API - 清除指定分区的 ZFS label（需要 JWT 认证，仅管理员可用）
+#[post("/label_clear")]
+pub async fn label_clear(
+    req: HttpRequest,
+    label_req: web::Json<LabelClearRequest>,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _username = match crate::utils::verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let partition_name = &label_req.partition_name;
+
+    // 2. 验证分区名称合法性（只允许字母数字）
+    if !partition_name.chars().all(|c| c.is_alphanumeric()) {
+        return HttpResponse::BadRequest().json(LabelClearResponse {
+            success: false,
+            message: "Invalid partition name format".to_string(),
+            error: Some("Partition name must be alphanumeric".to_string()),
+        });
+    }
+
+    // 3. 执行 zpool labelclear -f /dev/<partition_name>
+    let device_path = format!("/dev/{}", partition_name);
+
+    let output = match Command::new("zpool")
+        .args(["labelclear", "-f", &device_path])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(LabelClearResponse {
+                success: false,
+                message: "Failed to execute zpool labelclear command".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    if output.status.success() {
+        HttpResponse::Ok().json(LabelClearResponse {
+            success: true,
+            message: format!("Successfully cleared ZFS label on '{}'", partition_name),
+            error: None,
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        HttpResponse::InternalServerError().json(LabelClearResponse {
+            success: false,
+            message: format!("Failed to clear ZFS label on '{}'", partition_name),
+            error: Some(stderr.to_string()),
         })
     }
 }
