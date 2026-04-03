@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::process::Command;
 
 use crate::utils::admin::{validate_token_with_db, verify_admin_access};
+use crate::utils::consts::FORBID_DIRECTORY;
 use crate::disk::zfs_utils::DatasetDetail;
 
 /// Dataset 信息结构体
@@ -1017,6 +1018,146 @@ pub async fn offline_pools(req: HttpRequest, pool: web::Data<crate::DbPool>) -> 
         data: Some(pools),
         error: None,
     })
+}
+
+/// Import Pool 请求结构体
+#[derive(Deserialize, Debug)]
+pub struct ImportPoolRequest {
+    pub poolname: String,
+    pub dir: Option<String>,
+    pub mount_on_startup: Option<bool>,
+}
+
+/// Import Pool 响应结构体
+#[derive(Serialize)]
+pub struct ImportPoolResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// zfs/import_pool API - 导入 ZFS pool（需要 JWT 认证）
+/// 
+/// 如果 dir 为 null，直接调用: zpool import poolname
+/// 如果 dir 有值，调用: zpool import -R /dir poolname
+/// 如果 mount_on_startup 为 true，挂载后执行:
+///   zfs set mountpoint=/dir poolname
+///   zfs set canmount=true poolname
+#[post("/zfs/import_pool")]
+pub async fn import_pool(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    import_req: web::Json<ImportPoolRequest>,
+) -> impl Responder {
+    // 验证 JWT token
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
+    let poolname = &import_req.poolname;
+    
+    // 验证 poolname 不为空
+    if poolname.is_empty() {
+        return HttpResponse::BadRequest().json(ImportPoolResponse {
+            success: false,
+            message: "Pool name is required".to_string(),
+            error: Some("poolname cannot be empty".to_string()),
+        });
+    }
+
+    // 如果提供了 dir，验证是否为禁止目录
+    if let Some(ref dir) = import_req.dir {
+        if !dir.is_empty() {
+            for &forbidden in FORBID_DIRECTORY {
+                if dir == forbidden || dir.starts_with(&format!("{}/", forbidden)) || dir == "/" {
+                    return HttpResponse::BadRequest().json(ImportPoolResponse {
+                        success: false,
+                        message: format!("Forbidden directory: {}", dir),
+                        error: Some(format!("Directory '{}' is not allowed", forbidden)),
+                    });
+                }
+            }
+        }
+    }
+
+    // 构建 zpool import 命令
+    let import_result = if let Some(ref dir) = import_req.dir {
+        if dir.is_empty() {
+            // dir 为空字符串时，等同于 null
+            Command::new("zpool")
+                .args(["import", poolname])
+                .output()
+        } else {
+            // dir 有值时，使用 -R 选项
+            Command::new("zpool")
+                .args(["import", "-R", dir, poolname])
+                .output()
+        }
+    } else {
+        // dir 为 null
+        Command::new("zpool")
+            .args(["import", poolname])
+            .output()
+    };
+
+    match import_result {
+        Ok(output) => {
+            if output.status.success() {
+                // 如果 mount_on_startup 为 true，设置 mountpoint 和 canmount
+                if import_req.mount_on_startup == Some(true) {
+                    if let Some(ref dir) = import_req.dir {
+                        if !dir.is_empty() {
+                            // 设置 mountpoint
+                            let mountpoint_result = Command::new("zfs")
+                                .args(["set", &format!("mountpoint={}", dir), poolname])
+                                .output();
+                            
+                            if let Err(e) = mountpoint_result {
+                                return HttpResponse::InternalServerError().json(ImportPoolResponse {
+                                    success: false,
+                                    message: format!("Pool '{}' imported but failed to set mountpoint", poolname),
+                                    error: Some(format!("Failed to set mountpoint: {}", e)),
+                                });
+                            }
+
+                            // 设置 canmount=on
+                            let canmount_result = Command::new("zfs")
+                                .args(["set", "canmount=on", poolname])
+                                .output();
+                            
+                            if let Err(e) = canmount_result {
+                                return HttpResponse::InternalServerError().json(ImportPoolResponse {
+                                    success: false,
+                                    message: format!("Pool '{}' imported but failed to set canmount", poolname),
+                                    error: Some(format!("Failed to set canmount: {}", e)),
+                                });
+                            }
+                        }
+                    }
+                }
+
+                HttpResponse::Ok().json(ImportPoolResponse {
+                    success: true,
+                    message: format!("Pool '{}' imported successfully", poolname),
+                    error: None,
+                })
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                HttpResponse::InternalServerError().json(ImportPoolResponse {
+                    success: false,
+                    message: format!("Failed to import pool '{}'", poolname),
+                    error: Some(stderr.to_string()),
+                })
+            }
+        }
+        Err(e) => {
+            HttpResponse::InternalServerError().json(ImportPoolResponse {
+                success: false,
+                message: format!("Failed to execute zpool import for '{}'", poolname),
+                error: Some(e.to_string()),
+            })
+        }
+    }
 }
 
 #[cfg(test)]

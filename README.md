@@ -87,6 +87,21 @@ create pool
 
 ```
 
+Online pool
+
+```
+  curl -k -X GET https://192.168.3.203:8443/zfs/online_pools \
+   -H "Authorization: Bearer $TOKEN"  
+```
+
+
+Offline pool
+
+```
+  curl -k -X GET https://192.168.3.203:8443/zfs/offline_pools \
+   -H "Authorization: Bearer $TOKEN"  
+```
+
 desttory pool
 ```
   curl -k -X POST https://192.168.3.203:8443/destroy_pool \
@@ -529,4 +544,24 @@ Depends
   curl -k -X GET https://192.168.3.203:8443/zfs/depends \
       -H "Authorization: Bearer $TOKEN"
 
+```
+
+zpool import
+```
+  curl -k -X POST https://192.168.3.203:8443/zfs/import_pool \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"poolname": "mypool"}'
+
+  # 指定 dir，不开机挂载
+  curl -k -X POST https://192.168.3.203:8443/zfs/import_pool \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"poolname": "mypool", "dir": "/mnt/data", "mount_on_startup": false}'
+
+  # 指定 dir，开机挂载
+  curl -k -X POST https://192.168.3.203:8443/zfs/import_pool \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"poolname": "mypool", "dir": "/mnt/data", "mount_on_startup": true}'
 ```
