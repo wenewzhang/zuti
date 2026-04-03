@@ -185,7 +185,7 @@ async fn main() -> std::io::Result<()> {
             .service(apis::samba::smb_delete_user)
             .service(apis::samba::smb_list_users)
             .service(apis::samba::smb_change_passwd)
-            .service(apis::samba::list_zfs_pools)
+            .service(apis::samba::list_pools)
             .service(apis::samba::create_zfs_share)
             .service(apis::samba::list_zfs_shares)
             .service(apis::samba::list_dir_shares)

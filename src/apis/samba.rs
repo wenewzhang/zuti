@@ -938,9 +938,9 @@ pub struct ListZfsPoolsResponse {
     pub error: Option<String>,
 }
 
-// list_zfs_pools API - 获取所有 ZFS pool 名称列表（需要 JWT 认证）
-#[post("/smb/list_zfs_pools")]
-pub async fn list_zfs_pools(
+// list_pools API - 获取所有 ZFS pool 名称列表（需要 JWT 认证）
+#[post("/smb/list_pools")]
+pub async fn list_pools(
     req: HttpRequest,
     pool: web::Data<crate::DbPool>,
 ) -> impl Responder {

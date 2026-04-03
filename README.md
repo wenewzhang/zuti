@@ -61,6 +61,15 @@ Part disk
       https://192.168.3.203:8443/part_disk
 ```
 
+Label Clear
+```
+  curl -k -X POST \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{"partition_name": "sda1"}' \
+      https://192.168.3.203:8443/label_clear
+```
+
 find free disk partition
 ```
 curl -k -H "Authorization: Bearer $TOKEN"  \
@@ -184,7 +193,7 @@ list user
 
 list zfs pool
 ```
-  curl  -k -X POST https://192.168.3.203:8443/smb/list_zfs_pools \
+  curl  -k -X POST https://192.168.3.203:8443/smb/list_pools \
     -H "Authorization: Bearer $TOKEN"
 ```
 
