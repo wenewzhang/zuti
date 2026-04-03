@@ -4,8 +4,8 @@
 
 pub mod free;
 pub mod lsblk;
-pub mod zfs;
+pub mod zfs_utils;
 
 pub use free::get_free_disks;
 pub use lsblk::get_all_disks;
-pub use zfs::{get_zfs_disks, DatasetDetail, get_datasets};
+pub use zfs_utils::{get_zfs_disks, DatasetDetail, get_datasets};

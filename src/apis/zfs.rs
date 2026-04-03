@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::process::Command;
 
 use crate::utils::admin::{validate_token_with_db, verify_admin_access};
-use crate::disk::zfs::DatasetDetail;
+use crate::disk::zfs_utils::DatasetDetail;
 
 /// Dataset 信息结构体
 #[derive(Serialize, Deserialize, Debug)]
@@ -66,7 +66,7 @@ pub async fn get_datasets(req: HttpRequest, pool: web::Data<crate::DbPool>) -> i
     }
 
     // 调用 disk/zfs 模块的 get_datasets 函数
-    let datasets = crate::disk::zfs::get_datasets();
+    let datasets = crate::disk::zfs_utils::get_datasets();
 
     if datasets.is_empty() {
         // 可能是命令执行失败或没有 datasets
@@ -861,6 +861,48 @@ pub struct DatasetDependsResponse {
     pub error: Option<String>,
 }
 
+/// ZFS Pool 详细信息响应结构体
+#[derive(Serialize)]
+pub struct ZpoolDetailInfo {
+    pub name: String,
+    pub size: String,
+    pub alloc: String,
+    pub free: String,
+    pub ckpoint: String,
+    pub expandsz: String,
+    pub frag: String,
+    pub cap: String,
+    pub dedup: String,
+    pub health: String,
+    pub altroot: String,
+}
+
+impl From<crate::disk::zfs_utils::ZpoolInfo> for ZpoolDetailInfo {
+    fn from(p: crate::disk::zfs_utils::ZpoolInfo) -> Self {
+        Self {
+            name: p.name,
+            size: p.size,
+            alloc: p.alloc,
+            free: p.free,
+            ckpoint: p.ckpoint,
+            expandsz: p.expandsz,
+            frag: p.frag,
+            cap: p.cap,
+            dedup: p.dedup,
+            health: p.health,
+            altroot: p.altroot,
+        }
+    }
+}
+
+/// ZFS Pools 响应结构体
+#[derive(Serialize)]
+pub struct ZpoolListResponse {
+    pub success: bool,
+    pub data: Option<Vec<ZpoolDetailInfo>>,
+    pub error: Option<String>,
+}
+
 /// 获取 zfs list -r -o name,mountpoint,canmount,origin 命令的输出
 fn get_zfs_depends_output() -> Option<String> {
     Command::new("zfs")
@@ -921,6 +963,58 @@ pub async fn get_dataset_depends(req: HttpRequest, pool: web::Data<crate::DbPool
     HttpResponse::Ok().json(DatasetDependsResponse {
         success: true,
         data: Some(datasets),
+        error: None,
+    })
+}
+
+/// zfs/online_pools API - 获取所有在线 ZFS pools（需要 JWT 认证）
+#[get("/zfs/online_pools")]
+pub async fn online_pools(req: HttpRequest, pool: web::Data<crate::DbPool>) -> impl Responder {
+    // 验证 JWT token
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
+    let pools = crate::disk::zfs_utils::get_online_pools();
+
+    if pools.is_empty() {
+        return HttpResponse::Ok().json(ZpoolListResponse {
+            success: true,
+            data: Some(Vec::new()),
+            error: None,
+        });
+    }
+
+    let pool_infos: Vec<ZpoolDetailInfo> = pools.into_iter().map(|p| p.into()).collect();
+
+    HttpResponse::Ok().json(ZpoolListResponse {
+        success: true,
+        data: Some(pool_infos),
+        error: None,
+    })
+}
+
+/// ZFS Offline Pools 响应结构体
+#[derive(Serialize)]
+pub struct OfflinePoolsResponse {
+    pub success: bool,
+    pub data: Option<Vec<String>>,
+    pub error: Option<String>,
+}
+
+/// zfs/offline_pools API - 获取所有可导入但未在线的 ZFS pools（需要 JWT 认证）
+#[get("/zfs/offline_pools")]
+pub async fn offline_pools(req: HttpRequest, pool: web::Data<crate::DbPool>) -> impl Responder {
+    // 验证 JWT token
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
+    let pools = crate::disk::zfs_utils::get_offline_pools();
+
+    HttpResponse::Ok().json(OfflinePoolsResponse {
+        success: true,
+        data: Some(pools),
         error: None,
     })
 }
