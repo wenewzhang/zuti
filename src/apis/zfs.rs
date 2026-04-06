@@ -876,6 +876,8 @@ pub struct ZpoolDetailInfo {
     pub dedup: String,
     pub health: String,
     pub altroot: String,
+    pub canmount: String,
+    pub mountpoint: String,
 }
 
 impl From<crate::disk::zfs_utils::ZpoolInfo> for ZpoolDetailInfo {
@@ -892,6 +894,8 @@ impl From<crate::disk::zfs_utils::ZpoolInfo> for ZpoolDetailInfo {
             dedup: p.dedup,
             health: p.health,
             altroot: p.altroot,
+            canmount: p.canmount,
+            mountpoint: p.mountpoint,
         }
     }
 }
@@ -986,7 +990,17 @@ pub async fn online_pools(req: HttpRequest, pool: web::Data<crate::DbPool>) -> i
         });
     }
 
-    let pool_infos: Vec<ZpoolDetailInfo> = pools.into_iter().map(|p| p.into()).collect();
+    let pool_infos: Vec<ZpoolDetailInfo> = pools
+        .into_iter()
+        .map(|mut p| {
+            // 获取 canmount 和 mountpoint 属性并合并到 pool 信息中
+            if let Some(props) = crate::disk::zfs_utils::get_pool_extra_props(&p.name) {
+                p.canmount = props.canmount;
+                p.mountpoint = props.mountpoint;
+            }
+            p.into()
+        })
+        .collect();
 
     HttpResponse::Ok().json(ZpoolListResponse {
         success: true,

@@ -119,6 +119,8 @@ pub struct ZpoolInfo {
     pub dedup: String,
     pub health: String,
     pub altroot: String,
+    pub canmount: String,
+    pub mountpoint: String,
 }
 
 /// 获取 zpool list 命令的输出
@@ -154,6 +156,8 @@ fn parse_zpool_list(output: &str) -> Vec<ZpoolInfo> {
                 dedup: parts[8].to_string(),
                 health: parts[9].to_string(),
                 altroot: parts[10].to_string(),
+                canmount: String::new(),
+                mountpoint: String::new(),
             });
         }
     }
@@ -167,6 +171,56 @@ pub fn get_online_pools() -> Vec<ZpoolInfo> {
         Some(output) => parse_zpool_list(&output),
         None => Vec::new(),
     }
+}
+
+/// Pool 额外属性信息（canmount, mountpoint）
+#[derive(Debug, Clone)]
+pub struct PoolExtraProps {
+    pub canmount: String,
+    pub mountpoint: String,
+}
+
+/// 获取指定 pool 的 canmount 和 mountpoint 属性
+pub fn get_pool_extra_props(poolname: &str) -> Option<PoolExtraProps> {
+    let output = Command::new("zfs")
+        .args(["get", "-H", "-o", "property,value", "canmount,mountpoint", poolname])
+        .output()
+        .ok()?;
+    
+    if !output.status.success() {
+        return None;
+    }
+    
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut canmount = String::new();
+    let mut mountpoint = String::new();
+    
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        
+        let parts: Vec<&str> = trimmed.split('\t').collect();
+        if parts.len() >= 2 {
+            let prop = parts[0].trim();
+            let value = parts[1].trim();
+            match prop {
+                "canmount" => canmount = value.to_string(),
+                "mountpoint" => mountpoint = value.to_string(),
+                _ => {}
+            }
+        }
+    }
+    
+    if canmount.is_empty() && mountpoint.is_empty() {
+        return None;
+    }
+    
+    Some(PoolExtraProps {
+        canmount,
+        mountpoint,
+    })
 }
 
 /// 获取 zpool import 命令的输出
