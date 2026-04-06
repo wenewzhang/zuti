@@ -1044,15 +1044,16 @@ pub struct ImportPoolResponse {
 ///   zfs set mountpoint=/dir poolname
 ///   zfs set canmount=true poolname
 #[post("/zfs/import_pool")]
-pub async fn import_pool(
+pub async fn   import_pool(
     req: HttpRequest,
     pool: web::Data<crate::DbPool>,
     import_req: web::Json<ImportPoolRequest>,
 ) -> impl Responder {
     // 验证 JWT token
-    if let Err(response) = validate_token_with_db(&req, &pool).await {
-        return response;
-    }
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
 
     let poolname = &import_req.poolname;
     
@@ -1182,9 +1183,10 @@ pub async fn export_pool(
     export_req: web::Json<ExportPoolRequest>,
 ) -> impl Responder {
     // 验证 JWT token
-    if let Err(response) = validate_token_with_db(&req, &pool).await {
-        return response;
-    }
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
 
     let poolname = &export_req.poolname;
 
