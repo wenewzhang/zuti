@@ -1135,6 +1135,19 @@ pub async fn   import_pool(
                             }
                         }
                     }
+                } else {
+                    // mount_on_startup 不为真时，设置 canmount=off
+                    let canmount_result = Command::new("zfs")
+                        .args(["set", "canmount=off", poolname])
+                        .output();
+                    
+                    if let Err(e) = canmount_result {
+                        return HttpResponse::InternalServerError().json(ImportPoolResponse {
+                            success: false,
+                            message: format!("Pool '{}' imported but failed to set canmount=off", poolname),
+                            error: Some(format!("Failed to set canmount=off: {}", e)),
+                        });
+                    }
                 }
 
                 HttpResponse::Ok().json(ImportPoolResponse {
