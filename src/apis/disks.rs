@@ -603,7 +603,7 @@ pub async fn get_free_parts(req: HttpRequest, pool: web::Data<crate::DbPool>) ->
 #[derive(Deserialize)]
 pub struct CreatePoolRequest {
     pub pool_name: String,
-    pub pool_type: String, // pool, mirror, raid1, raid2, raid3
+    pub pool_type: String, // single,strip, mirror, raid1, raid2, raid3
     pub devices: Vec<String>, // 如 ["sda", "nvme0n1", "sdb1"]
 }
 
@@ -761,7 +761,8 @@ pub async fn create_pool(
 
     // 3. 验证 pool_type 和设备数量
     let min_devices = match pool_type.as_str() {
-        "pool" => 1,
+        "single" => 1,
+        "strip" => 2,
         "mirror" => 2,
         "raid1" => 3,
         "raid2" => 4,
@@ -813,10 +814,14 @@ pub async fn create_pool(
     let mut args: Vec<String> = vec!["create".to_string(), "-f".to_string(), "-o".to_string(), "ashift=12".to_string()];
 
     match pool_type.as_str() {
-        "pool" => {
+        "single" => {
             args.push(pool_name.clone());
             args.extend(device_by_ids);
         }
+        "strip" => {
+            args.push(pool_name.clone());
+            args.extend(device_by_ids);
+        }        
         "mirror" => {
             args.push(pool_name.clone());
             args.push("mirror".to_string());
