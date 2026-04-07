@@ -10,6 +10,7 @@ use crate::utils::admin::validate_token_with_db;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PartitionInfo {
     pub name: String,
+    pub size: String,
 }
 
 // get_free_parts 响应结构体
@@ -504,9 +505,9 @@ pub async fn get_free_parts(req: HttpRequest, pool: web::Data<crate::DbPool>) ->
         return response;
     }
 
-    // 2. 执行 lsblk -fpJ 命令获取所有分区信息
+    // 2. 执行 lsblk 命令获取所有分区信息
     let output = match Command::new("lsblk")
-        .args(["-fpJ"])
+        .args(["-fpJ", "-o", "NAME,FSTYPE,LABEL,UUID,FSAVAIL,FSUSE%,MOUNTPOINT,SIZE"])
         .output()
     {
         Ok(result) => result,
@@ -578,8 +579,13 @@ pub async fn get_free_parts(req: HttpRequest, pool: web::Data<crate::DbPool>) ->
                         .unwrap_or("")
                         .trim_start_matches("/dev/")
                         .to_string();
+                    let size = child
+                        .get("size")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("")
+                        .to_string();
 
-                    free_parts.push(PartitionInfo { name });
+                    free_parts.push(PartitionInfo { name, size });
                 }
             }
         }
