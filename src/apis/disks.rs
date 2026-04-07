@@ -571,11 +571,12 @@ pub async fn get_free_parts(req: HttpRequest, pool: web::Data<crate::DbPool>) ->
             for child in children {
                 // 检查 fstype 是否为 null
                 if child.get("fstype").map(|f| f.is_null()).unwrap_or(true) {
-                    // 解析分区信息
+                    // 解析分区信息，去掉 /dev/ 前缀
                     let name = child
                         .get("name")
                         .and_then(|n| n.as_str())
                         .unwrap_or("")
+                        .trim_start_matches("/dev/")
                         .to_string();
 
                     free_parts.push(PartitionInfo { name });
