@@ -2,7 +2,7 @@ use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
-use crate::disk::get_free_disks as get_free_disk_list;
+use crate::disk::{get_free_disks as get_free_disk_list, DiskBasicInfo};
 use crate::utils::admin::validate_token_with_db;
 
 
@@ -134,7 +134,7 @@ pub async fn get_disks(req: HttpRequest, pool: web::Data<crate::DbPool>) -> impl
 #[derive(Serialize)]
 pub struct FreeDisksResponse {
     pub success: bool,
-    pub data: Option<Vec<String>>,
+    pub data: Option<Vec<DiskBasicInfo>>,
     pub error: Option<String>,
 }
 
@@ -197,7 +197,7 @@ pub async fn format_disk(
 
     // 3. 检查硬盘是否在空闲硬盘列表中
     let free_disks = get_free_disk_list();
-    if !free_disks.contains(&disk_name.to_string()) {
+    if !free_disks.iter().any(|d| d.name == *disk_name) {
         return HttpResponse::BadRequest().json(DeleteDiskResponse {
             success: false,
             message: format!("Disk '{}' is not available for formatting", disk_name),

@@ -11,7 +11,7 @@ fn main() {
     
     // 输出所有磁盘
     for disk in &all_disks {
-        println!("{}", disk);
+        println!("{} ({})", disk.name, disk.size);
     }
     println!("----");
     
@@ -24,8 +24,8 @@ fn main() {
     // 输出非 ZFS 磁盘
     let zfs_set: HashSet<String> = zfs_disks.into_iter().collect();
     for disk in &all_disks {
-        if !zfs_set.contains(disk) {
-            println!("/dev/{}", disk);
+        if !zfs_set.contains(&disk.name) {
+            println!("/dev/{} ({})", disk.name, disk.size);
         }
     }
 }
