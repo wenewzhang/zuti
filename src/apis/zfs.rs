@@ -1465,6 +1465,19 @@ pub async fn set_pool_advanced_setting(
         });
     }
 
+    // 如果设置了 mountpoint，检查是否为禁止目录
+    if let Some(ref mountpoint) = setting_req.mountpoint {
+        for &forbidden in FORBID_DIRECTORY {
+            if mountpoint == forbidden || mountpoint.starts_with(&format!("{}/", forbidden)) || mountpoint == "/" {
+                return HttpResponse::BadRequest().json(PoolAdvancedSettingPostResponse {
+                    success: false,
+                    message: format!("Forbidden directory: {}", mountpoint),
+                    error: Some(format!("Directory '{}' is not allowed for mountpoint", forbidden)),
+                });
+            }
+        }
+    }
+
     // 定义要设置的属性及其值
     let properties: Vec<(&str, Option<&String>)> = vec![
         ("primarycache", setting_req.primarycache.as_ref()),
