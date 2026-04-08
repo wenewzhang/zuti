@@ -1,3 +1,4 @@
+pub mod chkpoint;
 pub mod container;
 pub mod disks;
 pub mod docker;
