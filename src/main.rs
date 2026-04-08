@@ -234,6 +234,8 @@ async fn main() -> std::io::Result<()> {
             .service(apis::zfs::reboot_system)
             .service(apis::zfs::reboot_system_force)
             .service(apis::zfs::shutdown_system)
+            .service(apis::zfs::get_pool_advanced_setting)
+            .service(apis::zfs::set_pool_advanced_setting)
     })
     .bind_openssl(&server_address, builder)?
     .run()

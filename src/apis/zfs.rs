@@ -1256,6 +1256,254 @@ pub async fn export_pool(
     }
 }
 
+/// Pool 高级设置属性结构体
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PoolAdvancedSettings {
+    pub primarycache: String,
+    pub quota: String,
+    pub mountpoint: String,
+    pub recordsize: String,
+    pub atime: String,
+    pub relatime: String,
+    pub readonly: String,
+    pub aclmode: String,
+    pub aclinherit: String,
+    pub acltype: String,
+    pub canmount: String,
+    pub logbias: String,
+    pub sync: String,
+    pub compression: String,
+    pub checksum: String,
+}
+
+/// Pool 高级设置 GET 响应结构体
+#[derive(Serialize)]
+pub struct PoolAdvancedSettingGetResponse {
+    pub success: bool,
+    pub data: Option<PoolAdvancedSettings>,
+    pub error: Option<String>,
+}
+
+/// Pool 高级设置 POST 请求结构体
+#[derive(Deserialize, Debug)]
+pub struct PoolAdvancedSettingPostRequest {
+    pub dataset: String,
+    pub primarycache: Option<String>,
+    pub quota: Option<String>,
+    pub mountpoint: Option<String>,
+    pub recordsize: Option<String>,
+    pub atime: Option<String>,
+    pub relatime: Option<String>,
+    pub readonly: Option<String>,
+    pub aclmode: Option<String>,
+    pub aclinherit: Option<String>,
+    pub acltype: Option<String>,
+    pub canmount: Option<String>,
+    pub logbias: Option<String>,
+    pub sync: Option<String>,
+    pub compression: Option<String>,
+    pub checksum: Option<String>,
+}
+
+/// Pool 高级设置 POST 响应结构体
+#[derive(Serialize)]
+pub struct PoolAdvancedSettingPostResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// 获取 dataset 的高级属性
+fn get_dataset_advanced_properties(dataset: &str) -> Option<PoolAdvancedSettings> {
+    let props = [
+        "primarycache", "quota", "mountpoint", "recordsize", "atime",
+        "relatime", "readonly", "aclmode", "aclinherit", "acltype",
+        "canmount", "logbias", "sync", "compression", "checksum",
+    ];
+    let props_str = props.join(",");
+    
+    let output = Command::new("zfs")
+        .args(["get", &props_str, "-H", "-o", "property,value", dataset])
+        .output()
+        .ok()?;
+    
+    if !output.status.success() {
+        return None;
+    }
+    
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut settings = PoolAdvancedSettings {
+        primarycache: String::new(),
+        quota: String::new(),
+        mountpoint: String::new(),
+        recordsize: String::new(),
+        atime: String::new(),
+        relatime: String::new(),
+        readonly: String::new(),
+        aclmode: String::new(),
+        aclinherit: String::new(),
+        acltype: String::new(),
+        canmount: String::new(),
+        logbias: String::new(),
+        sync: String::new(),
+        compression: String::new(),
+        checksum: String::new(),
+    };
+    
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() >= 2 {
+            let property = parts[0].trim();
+            let value = parts[1].trim();
+            match property {
+                "primarycache" => settings.primarycache = value.to_string(),
+                "quota" => settings.quota = value.to_string(),
+                "mountpoint" => settings.mountpoint = value.to_string(),
+                "recordsize" => settings.recordsize = value.to_string(),
+                "atime" => settings.atime = value.to_string(),
+                "relatime" => settings.relatime = value.to_string(),
+                "readonly" => settings.readonly = value.to_string(),
+                "aclmode" => settings.aclmode = value.to_string(),
+                "aclinherit" => settings.aclinherit = value.to_string(),
+                "acltype" => settings.acltype = value.to_string(),
+                "canmount" => settings.canmount = value.to_string(),
+                "logbias" => settings.logbias = value.to_string(),
+                "sync" => settings.sync = value.to_string(),
+                "compression" => settings.compression = value.to_string(),
+                "checksum" => settings.checksum = value.to_string(),
+                _ => {}
+            }
+        }
+    }
+    
+    Some(settings)
+}
+
+/// 设置单个 ZFS 属性
+fn set_zfs_property(dataset: &str, property: &str, value: &str) -> Result<(), String> {
+    let output = Command::new("zfs")
+        .args(["set", &format!("{}={}", property, value), dataset])
+        .output()
+        .map_err(|e| format!("Command error: {}", e))?;
+    
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+/// zfs/pool_advanced_setting GET API - 获取 ZFS dataset 的高级属性（需要 JWT 认证）
+#[get("/zfs/pool_advanced_setting")]
+pub async fn get_pool_advanced_setting(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    query: web::Query<std::collections::HashMap<String, String>>,
+) -> impl Responder {
+    // 验证 JWT token
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
+    // 获取 dataset 参数
+    let dataset = match query.get("dataset") {
+        Some(d) => d,
+        None => {
+            return HttpResponse::BadRequest().json(PoolAdvancedSettingGetResponse {
+                success: false,
+                data: None,
+                error: Some("dataset parameter is required".to_string()),
+            });
+        }
+    };
+
+    // 验证 dataset 名称合法性
+    if !dataset.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/' || c == '@') {
+        return HttpResponse::BadRequest().json(PoolAdvancedSettingGetResponse {
+            success: false,
+            data: None,
+            error: Some("Dataset name must contain only alphanumeric characters, underscores, hyphens, dots, slashes, or @".to_string()),
+        });
+    }
+
+    // 获取属性
+    match get_dataset_advanced_properties(dataset) {
+        Some(settings) => HttpResponse::Ok().json(PoolAdvancedSettingGetResponse {
+            success: true,
+            data: Some(settings),
+            error: None,
+        }),
+        None => HttpResponse::InternalServerError().json(PoolAdvancedSettingGetResponse {
+            success: false,
+            data: None,
+            error: Some(format!("Failed to get properties for dataset '{}'", dataset)),
+        }),
+    }
+}
+
+/// zfs/pool_advanced_setting POST API - 设置 ZFS dataset 的高级属性（需要 JWT 认证，仅管理员可用）
+#[post("/zfs/pool_advanced_setting")]
+pub async fn set_pool_advanced_setting(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    setting_req: web::Json<PoolAdvancedSettingPostRequest>,
+) -> impl Responder {
+    // 验证 JWT token 并检查 admin 权限
+    let _username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let dataset = &setting_req.dataset;
+
+    // 验证 dataset 名称合法性
+    if !dataset.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/' || c == '@') {
+        return HttpResponse::BadRequest().json(PoolAdvancedSettingPostResponse {
+            success: false,
+            message: "Invalid dataset name format".to_string(),
+            error: Some("Dataset name must contain only alphanumeric characters, underscores, hyphens, dots, slashes, or @".to_string()),
+        });
+    }
+
+    // 定义要设置的属性及其值
+    let properties: Vec<(&str, Option<&String>)> = vec![
+        ("primarycache", setting_req.primarycache.as_ref()),
+        ("quota", setting_req.quota.as_ref()),
+        ("mountpoint", setting_req.mountpoint.as_ref()),
+        ("recordsize", setting_req.recordsize.as_ref()),
+        ("atime", setting_req.atime.as_ref()),
+        ("relatime", setting_req.relatime.as_ref()),
+        ("readonly", setting_req.readonly.as_ref()),
+        ("aclmode", setting_req.aclmode.as_ref()),
+        ("aclinherit", setting_req.aclinherit.as_ref()),
+        ("acltype", setting_req.acltype.as_ref()),
+        ("canmount", setting_req.canmount.as_ref()),
+        ("logbias", setting_req.logbias.as_ref()),
+        ("sync", setting_req.sync.as_ref()),
+        ("compression", setting_req.compression.as_ref()),
+        ("checksum", setting_req.checksum.as_ref()),
+    ];
+
+    // 逐个设置属性
+    for (prop, value_opt) in properties {
+        if let Some(value) = value_opt {
+            if let Err(e) = set_zfs_property(dataset, prop, value) {
+                return HttpResponse::InternalServerError().json(PoolAdvancedSettingPostResponse {
+                    success: false,
+                    message: format!("Failed to set property '{}' to '{}'", prop, value),
+                    error: Some(e),
+                });
+            }
+        }
+    }
+
+    HttpResponse::Ok().json(PoolAdvancedSettingPostResponse {
+        success: true,
+        message: format!("Successfully updated advanced settings for dataset '{}'", dataset),
+        error: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

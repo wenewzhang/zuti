@@ -83,7 +83,7 @@ create pool
   curl -k -X POST https://192.168.3.203:8443/create_pool \
    -H "Authorization: Bearer $TOKEN"  \
     -H "Content-Type: application/json" \
-    -d '{"pool_name":"datapool","pool_type":"raid1","devices":["sda3","sdb3","nvme0n1p1"]}'
+    -d '{"pool_name":"datapool","pool_type":"mirror","devices":["sdb","sdc"]}'
 
 ```
 
@@ -572,4 +572,17 @@ export pool
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{"poolname": "mypool"}'
+```
+
+  # GET 请求
+```
+  curl -k -H "Authorization: Bearer $TOKEN" \
+    "https://192.168.3.203:8443/zfs/pool_advanced_setting?dataset=mypool"
+```
+  # POST 请求
+```  
+  curl -k -X POST -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"dataset":"mypool/mydataset","compression":"lz4","sync":"disabled"}' \
+    https://192.168.3.203:8443/zfs/pool_advanced_setting
 ```
