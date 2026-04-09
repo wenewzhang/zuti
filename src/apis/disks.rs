@@ -771,7 +771,7 @@ pub async fn create_pool(
             return HttpResponse::BadRequest().json(CreatePoolResponse {
                 success: false,
                 message: "Invalid pool type".to_string(),
-                error: Some("Pool type must be one of: pool, mirror, raidz1, raidz2, raidz3".to_string()),
+                error: Some("Pool type must be one of: single,strip, mirror, raidz1, raidz2, raidz3".to_string()),
             });
         }
     };
@@ -827,22 +827,28 @@ pub async fn create_pool(
             args.push("mirror".to_string());
             args.extend(device_by_ids);
         }
-        "raid1" => {
+        "raidz1" => {
             args.push(pool_name.clone());
             args.push("raidz1".to_string());
             args.extend(device_by_ids);
         }
-        "raid2" => {
+        "raidz2" => {
             args.push(pool_name.clone());
             args.push("raidz2".to_string());
             args.extend(device_by_ids);
         }
-        "raid3" => {
+        "raidz3" => {
             args.push(pool_name.clone());
             args.push("raidz3".to_string());
             args.extend(device_by_ids);
         }
-        _ => unreachable!(),
+        _ => {
+            return HttpResponse::BadRequest().json(CreatePoolResponse {
+                success: false,
+                message: "Invalid pool type".to_string(),
+                error: Some(format!("Pool type '{}' is not supported", pool_type)),
+            });
+        }
     }
 
     // 7. 执行 zpool create 命令
