@@ -764,14 +764,14 @@ pub async fn create_pool(
         "single" => 1,
         "strip" => 2,
         "mirror" => 2,
-        "raid1" => 3,
-        "raid2" => 4,
-        "raid3" => 5,
+        "raidz1" => 3,
+        "raidz2" => 4,
+        "raidz3" => 5,
         _ => {
             return HttpResponse::BadRequest().json(CreatePoolResponse {
                 success: false,
                 message: "Invalid pool type".to_string(),
-                error: Some("Pool type must be one of: pool, mirror, raid1, raid2, raid3".to_string()),
+                error: Some("Pool type must be one of: pool, mirror, raidz1, raidz2, raidz3".to_string()),
             });
         }
     };
