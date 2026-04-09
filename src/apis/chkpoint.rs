@@ -71,7 +71,7 @@ fn get_checkpoint_info(poolname: &str) -> Option<CheckpointInfo> {
 }
 
 /// POST /chkpoint - 创建 ZFS pool 的 checkpoint（需要 JWT 认证，仅管理员可用）
-#[post("/chk/chkpoint")]
+#[post("/chk/checkpoint")]
 pub async fn create_chkpoint(
     req: HttpRequest,
     checkpoint_req: web::Json<CreateCheckpointRequest>,
@@ -127,7 +127,7 @@ pub async fn create_chkpoint(
 }
 
 /// DELETE /chkpoint - 删除 ZFS pool 的 checkpoint（需要 JWT 认证，仅管理员可用）
-#[delete("/chk/chkpoint")]
+#[delete("/chk/checkpoint")]
 pub async fn remove_chkpoint(
     req: HttpRequest,
     checkpoint_req: web::Json<CreateCheckpointRequest>,
@@ -288,7 +288,7 @@ pub async fn rollback_chkpoint(
 }
 
 /// GET /chkpoint?poolname=<poolname> - 获取指定 ZFS pool 的 checkpoint 信息（需要 JWT 认证）
-#[get("/chk/chkpoint")]
+#[get("/chk/checkpoint")]
 pub async fn get_chkpoint(
     req: HttpRequest,
     pool: web::Data<crate::DbPool>,
