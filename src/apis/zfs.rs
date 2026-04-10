@@ -1,5 +1,6 @@
 use actix_web::{get, post, HttpRequest, HttpResponse, Responder, web};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::process::Command;
 
 use crate::utils::admin::{validate_token_with_db, verify_admin_access};
@@ -1515,6 +1516,105 @@ pub async fn set_pool_advanced_setting(
         message: format!("Successfully updated advanced settings for dataset '{}'", dataset),
         error: None,
     })
+}
+
+#[derive(Deserialize)]
+pub struct GetPoolDevicesRequest {
+    pub poolname: String,
+}
+
+#[derive(Serialize)]
+pub struct PoolDeviceInfo {
+    pub name: String,
+}
+
+#[derive(Serialize)]
+pub struct GetPoolDevicesResponse {
+    pub success: bool,
+    pub data: Option<Vec<PoolDeviceInfo>>,
+    pub error: Option<String>,
+}
+
+fn get_pool_devices(poolname: &str) -> Result<Vec<PoolDeviceInfo>, String> {
+    let output = Command::new("zpool")
+        .args(["status", poolname, "-J"])
+        .output()
+        .map_err(|e| format!("Command error: {}", e))?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: Value = serde_json::from_str(&stdout)
+        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
+    let mut devices = Vec::new();
+
+    fn extract_disks(vdevs: &Value, devices: &mut Vec<PoolDeviceInfo>) {
+        if let Some(arr) = vdevs.as_array() {
+            for vdev in arr {
+                if vdev["type"].as_str() == Some("disk") {
+                    if let Some(name) = vdev["name"].as_str() {
+                        devices.push(PoolDeviceInfo {
+                            name: name.to_string(),
+                        });
+                    }
+                }
+                if let Some(children) = vdev["children"].as_array() {
+                    extract_disks(&Value::Array(children.clone()), devices);
+                }
+            }
+        }
+    }
+
+    if let Some(vdev_tree) = json.pointer("/1/vdev_tree") {
+        extract_disks(vdev_tree, &mut devices);
+    }
+
+    Ok(devices)
+}
+
+#[get("/zfs/get_pool_devices")]
+pub async fn get_pool_devices_handler(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    query: web::Query<GetPoolDevicesRequest>,
+) -> impl Responder {
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
+    let poolname = &query.poolname;
+
+    if poolname.is_empty() {
+        return HttpResponse::BadRequest().json(GetPoolDevicesResponse {
+            success: false,
+            data: None,
+            error: Some("poolname is required".to_string()),
+        });
+    }
+
+    if !poolname.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.') {
+        return HttpResponse::BadRequest().json(GetPoolDevicesResponse {
+            success: false,
+            data: None,
+            error: Some("poolname must contain only alphanumeric characters, underscores, hyphens, or dots".to_string()),
+        });
+    }
+
+    match get_pool_devices(poolname) {
+        Ok(devices) => HttpResponse::Ok().json(GetPoolDevicesResponse {
+            success: true,
+            data: Some(devices),
+            error: None,
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(GetPoolDevicesResponse {
+            success: false,
+            data: None,
+            error: Some(e),
+        }),
+    }
 }
 
 #[cfg(test)]
