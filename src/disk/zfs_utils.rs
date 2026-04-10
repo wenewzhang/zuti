@@ -315,58 +315,13 @@ pub fn get_pool_devices(poolname: &str) -> Result<Vec<PoolDevice>, String> {
                         .and_then(|n| n.as_str())
                         .unwrap_or("root");
                     let vdev_list = extract_vdevs_info(pool_name, pool_vdev_type, vdevs);
-                    for (vdev_key, vdev_type) in vdev_list {
+                    for (vdev_key, vdev_type) in &vdev_list {
                         eprintln!("=== VDEV key: '{}', vdev_type: '{}' ===", vdev_key, vdev_type);
                     }
+                    devices = vdev_list.into_iter().map(|(name, _)| PoolDevice { name }).collect();
                 }
             }
         }
-    }
-
-    fn extract_disks(vdevs: &Value, devices: &mut Vec<PoolDevice>) {
-        // 打印 vdevs 完整内容
-        eprintln!("=== VDEVS ===");
-        eprintln!("{}", serde_json::to_string_pretty(vdevs).unwrap_or_default());
-
-        if let Some(arr) = vdevs.as_array() {
-            // 只取 vdevs 的第一项数据
-            if let Some(first_vdev) = arr.first() {
-                eprintln!("=== FIRST_VDEV ===");
-                eprintln!("{}", serde_json::to_string_pretty(first_vdev).unwrap_or_default());
-                // 从第一项中获取 children 并遍历其中的磁盘
-                if let Some(children) = first_vdev["children"].as_array() {
-                    eprintln!("=== CHILDREN (count: {}) ===", children.len());
-                    for (i, child) in children.iter().enumerate() {
-                        eprintln!("=== CHILD[{}] ===", i);
-                        eprintln!("{}", serde_json::to_string_pretty(child).unwrap_or_default());
-                        extract_disk_recursive(child, devices);
-                    }
-                }
-            }
-        }
-    }
-
-    fn extract_disk_recursive(vdev: &Value, devices: &mut Vec<PoolDevice>) {
-        if vdev["type"].as_str() == Some("disk") {
-            if let Some(name) = vdev["name"].as_str() {
-                devices.push(PoolDevice {
-                    name: name.to_string(),
-                });
-            }
-        }
-        if let Some(children) = vdev["children"].as_array() {
-            for (i, child) in children.iter().enumerate() {
-                eprintln!("=== SUB_CHILD[{}] ===", i);
-                eprintln!("{}", serde_json::to_string_pretty(child).unwrap_or_default());
-                extract_disk_recursive(child, devices);
-            }
-        }
-    }
-
-    if let Some(vdev_tree) = json.pointer("/1/vdev_tree") {
-        eprintln!("=== VDEV_TREE (at /1/vdev_tree) ===");
-        eprintln!("{}", serde_json::to_string_pretty(vdev_tree).unwrap_or_default());
-        extract_disks(vdev_tree, &mut devices);
     }
 
     Ok(devices)
