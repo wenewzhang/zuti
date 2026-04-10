@@ -2,12 +2,12 @@ use crate::disk::lsblk::{get_all_disks, DiskBasicInfo};
 use crate::disk::zfs_utils::get_zfs_disks;
 
 /// 获取空闲硬盘列表
-/// 
+///
 /// 通过从所有硬盘中排除 ZFS 正在使用的硬盘，返回未被使用的硬盘列表
 pub fn get_free_disks() -> Vec<DiskBasicInfo> {
     let all_disks = get_all_disks();
     let zfs_disks = get_zfs_disks();
-    
+
     all_disks
         .into_iter()
         .filter(|disk| !zfs_disks.contains(&disk.name))
@@ -15,7 +15,7 @@ pub fn get_free_disks() -> Vec<DiskBasicInfo> {
 }
 
 /// 检查指定硬盘是否空闲
-/// 
+///
 /// 如果硬盘不在 ZFS 使用的硬盘列表中，则返回 true
 pub fn is_disk_free(disk_name: &str) -> bool {
     let zfs_disks = get_zfs_disks();

@@ -1,6 +1,5 @@
 use actix_web::{get, post, HttpRequest, HttpResponse, Responder, web};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::process::Command;
 
 use crate::utils::admin::{validate_token_with_db, verify_admin_access};
@@ -1535,46 +1534,6 @@ pub struct GetPoolDevicesResponse {
     pub error: Option<String>,
 }
 
-fn get_pool_devices(poolname: &str) -> Result<Vec<PoolDeviceInfo>, String> {
-    let output = Command::new("zpool")
-        .args(["status", poolname, "-j"])
-        .output()
-        .map_err(|e| format!("Command error: {}", e))?;
-
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: Value = serde_json::from_str(&stdout)
-        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
-
-    let mut devices = Vec::new();
-
-    fn extract_disks(vdevs: &Value, devices: &mut Vec<PoolDeviceInfo>) {
-        if let Some(arr) = vdevs.as_array() {
-            for vdev in arr {
-                if vdev["type"].as_str() == Some("disk") {
-                    if let Some(name) = vdev["name"].as_str() {
-                        devices.push(PoolDeviceInfo {
-                            name: name.to_string(),
-                        });
-                    }
-                }
-                if let Some(children) = vdev["children"].as_array() {
-                    extract_disks(&Value::Array(children.clone()), devices);
-                }
-            }
-        }
-    }
-
-    if let Some(vdev_tree) = json.pointer("/1/vdev_tree") {
-        extract_disks(vdev_tree, &mut devices);
-    }
-
-    Ok(devices)
-}
-
 #[get("/zfs/get_pool_devices")]
 pub async fn get_pool_devices_handler(
     req: HttpRequest,
@@ -1603,10 +1562,10 @@ pub async fn get_pool_devices_handler(
         });
     }
 
-    match get_pool_devices(poolname) {
+    match crate::disk::get_pool_devices(poolname) {
         Ok(devices) => HttpResponse::Ok().json(GetPoolDevicesResponse {
             success: true,
-            data: Some(devices),
+            data: Some(devices.into_iter().map(|d| PoolDeviceInfo { name: d.name }).collect()),
             error: None,
         }),
         Err(e) => HttpResponse::InternalServerError().json(GetPoolDevicesResponse {

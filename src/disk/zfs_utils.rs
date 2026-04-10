@@ -1,3 +1,5 @@
+use serde::Serialize;
+use serde_json::Value;
 use std::process::Command;
 
 /// Dataset 详细信息结构体
@@ -65,14 +67,15 @@ fn get_zpool_status_output() -> Option<String> {
 /// 从 zpool status 输出中解析 ZFS 使用的磁盘
 fn parse_zfs_disks(output: &str) -> Vec<String> {
     let mut result = Vec::new();
-    
+
     for line in output.lines() {
         let trimmed = line.trim();
         // 匹配以 sd, hd, vd, nvme 开头的行
-        if trimmed.starts_with("sd") || 
-           trimmed.starts_with("hd") || 
-           trimmed.starts_with("nvme") || 
-           trimmed.starts_with("vd") {
+        if trimmed.starts_with("sd")
+            || trimmed.starts_with("hd")
+            || trimmed.starts_with("nvme")
+            || trimmed.starts_with("vd")
+        {
             // 获取第一个字段（设备名）
             if let Some(device) = trimmed.split_whitespace().next() {
                 let disk = if device.starts_with("nvme") {
@@ -91,12 +94,12 @@ fn parse_zfs_disks(output: &str) -> Vec<String> {
             }
         }
     }
-    
+
     result
 }
 
 /// 获取 ZFS 正在使用的磁盘
-/// 
+///
 /// 通过 zpool status -v 命令获取 ZFS 池使用的磁盘设备
 pub fn get_zfs_disks() -> Vec<String> {
     match get_zpool_status_output() {
@@ -126,7 +129,12 @@ pub struct ZpoolInfo {
 /// 获取 zpool list 命令的输出
 fn get_zpool_list_output() -> Option<String> {
     Command::new("zpool")
-        .args(["list", "-H", "-o", "name,size,alloc,free,ckpoint,expandsz,frag,cap,dedup,health,altroot"])
+        .args([
+            "list",
+            "-H",
+            "-o",
+            "name,size,alloc,free,ckpoint,expandsz,frag,cap,dedup,health,altroot",
+        ])
         .output()
         .ok()
         .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
@@ -183,24 +191,31 @@ pub struct PoolExtraProps {
 /// 获取指定 pool 的 canmount 和 mountpoint 属性
 pub fn get_pool_extra_props(poolname: &str) -> Option<PoolExtraProps> {
     let output = Command::new("zfs")
-        .args(["get", "-H", "-o", "property,value", "canmount,mountpoint", poolname])
+        .args([
+            "get",
+            "-H",
+            "-o",
+            "property,value",
+            "canmount,mountpoint",
+            poolname,
+        ])
         .output()
         .ok()?;
-    
+
     if !output.status.success() {
         return None;
     }
-    
+
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut canmount = String::new();
     let mut mountpoint = String::new();
-    
+
     for line in stdout.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        
+
         let parts: Vec<&str> = trimmed.split('\t').collect();
         if parts.len() >= 2 {
             let prop = parts[0].trim();
@@ -212,15 +227,60 @@ pub fn get_pool_extra_props(poolname: &str) -> Option<PoolExtraProps> {
             }
         }
     }
-    
+
     if canmount.is_empty() && mountpoint.is_empty() {
         return None;
     }
-    
+
     Some(PoolExtraProps {
         canmount,
         mountpoint,
     })
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PoolDevice {
+    pub name: String,
+}
+
+pub fn get_pool_devices(poolname: &str) -> Result<Vec<PoolDevice>, String> {
+    let output = Command::new("zpool")
+        .args(["status", poolname, "-J"])
+        .output()
+        .map_err(|e| format!("Command error: {}", e))?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: Value =
+        serde_json::from_str(&stdout).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
+    let mut devices = Vec::new();
+
+    fn extract_disks(vdevs: &Value, devices: &mut Vec<PoolDevice>) {
+        if let Some(arr) = vdevs.as_array() {
+            if let Some(vdev) = arr.first() {
+                if vdev["type"].as_str() == Some("disk") {
+                    if let Some(name) = vdev["name"].as_str() {
+                        devices.push(PoolDevice {
+                            name: name.to_string(),
+                        });
+                    }
+                }
+                if let Some(children) = vdev["children"].as_array() {
+                    extract_disks(&Value::Array(children.clone()), devices);
+                }
+            }
+        }
+    }
+
+    if let Some(vdev_tree) = json.pointer("/1/vdev_tree") {
+        extract_disks(vdev_tree, &mut devices);
+    }
+
+    Ok(devices)
 }
 
 /// 获取 zpool import 命令的输出
