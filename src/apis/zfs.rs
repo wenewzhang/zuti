@@ -1537,7 +1537,7 @@ pub struct GetPoolDevicesResponse {
 
 fn get_pool_devices(poolname: &str) -> Result<Vec<PoolDeviceInfo>, String> {
     let output = Command::new("zpool")
-        .args(["status", poolname, "-J"])
+        .args(["status", poolname, "-j"])
         .output()
         .map_err(|e| format!("Command error: {}", e))?;
 

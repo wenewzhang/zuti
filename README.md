@@ -586,3 +586,9 @@ export pool
     -d '{"dataset":"mypool/mydataset","compression":"lz4","sync":"disabled"}' \
     https://192.168.3.203:8443/zfs/pool_advanced_setting
 ```
+
+pool devices
+```
+curl -k -X GET "https://192.168.3.203:8443/zfs/get_pool_devices?poolname=one-pool" \
+  -H "Authorization: Bearer $TOKEN" 
+```
