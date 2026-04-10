@@ -243,6 +243,40 @@ pub struct PoolDevice {
     pub name: String,
 }
 
+/// 递归提取 vdev 信息
+/// 传入: key, vdev_type, vdevs_value
+/// 返回: Vec<(key, vdev_type)>
+pub fn extract_vdevs_info(key: &str, vdev_type: &str, vdevs: &Value) -> Vec<(String, String)> {
+    let mut result = Vec::new();
+    
+    // 添加当前节点
+    result.push((key.to_string(), vdev_type.to_string()));
+    eprintln!("=== extract_vdevs_info: key='{}', vdev_type='{}' ===", key, vdev_type);
+    
+    // 递归处理嵌套的 vdevs
+    if let Some(vdevs_obj) = vdevs.as_object() {
+        for (vdev_key, vdev) in vdevs_obj {
+            let child_vdev_type = vdev.get("vdev_type")
+                .and_then(|n| n.as_str())
+                .unwrap_or("")
+                .to_string();
+            
+            // 递归调用，传入子节点的 key, vdev_type 和其嵌套的 vdevs
+            if let Some(nested_vdevs) = vdev.get("vdevs") {
+                eprintln!("=== 发现嵌套 vdevs in '{}'，递归调用 ===", vdev_key);
+                let nested = extract_vdevs_info(vdev_key, &child_vdev_type, nested_vdevs);
+                result.extend(nested);
+            } else {
+                // 叶子节点，没有嵌套 vdevs
+                result.push((vdev_key.clone(), child_vdev_type.clone()));
+                eprintln!("=== 叶子节点: key='{}', vdev_type='{}' ===", vdev_key, child_vdev_type);
+            }
+        }
+    }
+    
+    result
+}
+
 pub fn get_pool_devices(poolname: &str) -> Result<Vec<PoolDevice>, String> {
     let output = Command::new("zpool")
         .args(["status", poolname, "-j"])
@@ -257,15 +291,54 @@ pub fn get_pool_devices(poolname: &str) -> Result<Vec<PoolDevice>, String> {
     let json: Value =
         serde_json::from_str(&stdout).map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
+    // 打印完整 JSON
+    eprintln!("=== FULL JSON ===");
+    eprintln!("{}", serde_json::to_string_pretty(&json).unwrap_or_default());
+    eprintln!("=== END FULL JSON ===");
+
     let mut devices = Vec::new();
 
+    // 打印 pools 内容
+    if let Some(pools) = json.get("pools") {
+        eprintln!("=== POOLS ===");
+        eprintln!("{}", serde_json::to_string_pretty(pools).unwrap_or_default());
+        
+        // 从 pools 里获取 vdevs 内容
+        if let Some(pools_obj) = pools.as_object() {
+            for (pool_name, pool_info) in pools_obj {
+                if let Some(vdevs) = pool_info.get("vdevs") {
+                    eprintln!("=== POOL '{}' VDEVS =xx==", pool_name);
+                    eprintln!("{}", serde_json::to_string_pretty(vdevs).unwrap_or_default());
+                    
+                    // 递归提取 vdevs 信息
+                    let pool_vdev_type = pool_info.get("vdev_type")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("root");
+                    let vdev_list = extract_vdevs_info(pool_name, pool_vdev_type, vdevs);
+                    for (vdev_key, vdev_type) in vdev_list {
+                        eprintln!("=== VDEV key: '{}', vdev_type: '{}' ===", vdev_key, vdev_type);
+                    }
+                }
+            }
+        }
+    }
+
     fn extract_disks(vdevs: &Value, devices: &mut Vec<PoolDevice>) {
+        // 打印 vdevs 完整内容
+        eprintln!("=== VDEVS ===");
+        eprintln!("{}", serde_json::to_string_pretty(vdevs).unwrap_or_default());
+
         if let Some(arr) = vdevs.as_array() {
             // 只取 vdevs 的第一项数据
             if let Some(first_vdev) = arr.first() {
+                eprintln!("=== FIRST_VDEV ===");
+                eprintln!("{}", serde_json::to_string_pretty(first_vdev).unwrap_or_default());
                 // 从第一项中获取 children 并遍历其中的磁盘
                 if let Some(children) = first_vdev["children"].as_array() {
-                    for child in children {
+                    eprintln!("=== CHILDREN (count: {}) ===", children.len());
+                    for (i, child) in children.iter().enumerate() {
+                        eprintln!("=== CHILD[{}] ===", i);
+                        eprintln!("{}", serde_json::to_string_pretty(child).unwrap_or_default());
                         extract_disk_recursive(child, devices);
                     }
                 }
@@ -282,13 +355,17 @@ pub fn get_pool_devices(poolname: &str) -> Result<Vec<PoolDevice>, String> {
             }
         }
         if let Some(children) = vdev["children"].as_array() {
-            for child in children {
+            for (i, child) in children.iter().enumerate() {
+                eprintln!("=== SUB_CHILD[{}] ===", i);
+                eprintln!("{}", serde_json::to_string_pretty(child).unwrap_or_default());
                 extract_disk_recursive(child, devices);
             }
         }
     }
 
     if let Some(vdev_tree) = json.pointer("/1/vdev_tree") {
+        eprintln!("=== VDEV_TREE (at /1/vdev_tree) ===");
+        eprintln!("{}", serde_json::to_string_pretty(vdev_tree).unwrap_or_default());
         extract_disks(vdev_tree, &mut devices);
     }
 
