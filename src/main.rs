@@ -234,6 +234,7 @@ async fn main() -> std::io::Result<()> {
             .service(apis::zfs::online_pools)
             .service(apis::zfs::offline_pools)
             .service(apis::zfs::import_pool)
+            .service(apis::zfs::get_pool_devices)
             .service(apis::zfs::export_pool)
             .service(apis::zfs::reboot_system)
             .service(apis::zfs::reboot_system_force)

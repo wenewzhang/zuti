@@ -1,6 +1,7 @@
 use actix_web::{get, post, HttpRequest, HttpResponse, Responder, web};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
+use serde_json;
 
 use crate::utils::admin::{validate_token_with_db, verify_admin_access};
 use crate::utils::consts::FORBID_DIRECTORY;
@@ -1030,6 +1031,113 @@ pub async fn offline_pools(req: HttpRequest, pool: web::Data<crate::DbPool>) -> 
     HttpResponse::Ok().json(OfflinePoolsResponse {
         success: true,
         data: Some(pools),
+        error: None,
+    })
+}
+
+/// 获取 pool 下的所有 disk 设备名
+fn find_disks(value: &serde_json::Value, disks: &mut Vec<String>) {
+    if let Some(type_val) = value.get("type") {
+        if type_val == "disk" {
+            if let Some(name) = value.get("name").and_then(|n| n.as_str()) {
+                disks.push(name.to_string());
+            }
+        }
+    }
+    
+    // Check children
+    if let Some(children) = value.get("children").and_then(|c| c.as_array()) {
+        for child in children {
+            find_disks(child, disks);
+        }
+    }
+    
+    // Check vdevs (sometimes at top level)
+    if let Some(vdevs) = value.get("vdevs") {
+        find_disks(vdevs, disks);
+    }
+}
+
+// GetPoolDevices 请求结构体
+#[derive(Deserialize)]
+pub struct GetPoolDevicesRequest {
+    pub poolname: String,
+}
+
+// GetPoolDevices 响应结构体
+#[derive(Serialize)]
+pub struct GetPoolDevicesResponse {
+    pub success: bool,
+    pub data: Option<Vec<String>>,
+    pub error: Option<String>,
+}
+
+/// zfs/get_pool_devices API - 获取 pool 下所有类型为 disk 的设备名（需要 JWT 认证）
+#[post("/zfs/get_pool_devices")]
+pub async fn get_pool_devices(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    body: web::Json<GetPoolDevicesRequest>,
+) -> impl Responder {
+    // 验证 JWT token
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
+    let poolname = &body.poolname;
+    
+    // Validate poolname
+    if !poolname.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.') {
+        return HttpResponse::BadRequest().json(GetPoolDevicesResponse {
+            success: false,
+            data: None,
+            error: Some("Invalid pool name format".to_string()),
+        });
+    }
+
+    // Execute zpool status <poolname> -J
+    let output = match Command::new("zpool")
+        .args(["status", poolname, "-J"])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(GetPoolDevicesResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to execute command: {}", e)),
+            });
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return HttpResponse::InternalServerError().json(GetPoolDevicesResponse {
+            success: false,
+            data: None,
+            error: Some(stderr.to_string()),
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    
+    let v: serde_json::Value = match serde_json::from_str(&stdout) {
+        Ok(v) => v,
+        Err(e) => {
+             return HttpResponse::InternalServerError().json(GetPoolDevicesResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to parse JSON: {}", e)),
+            });
+        }
+    };
+
+    let mut disks = Vec::new();
+    find_disks(&v, &mut disks);
+    
+    HttpResponse::Ok().json(GetPoolDevicesResponse {
+        success: true,
+        data: Some(disks),
         error: None,
     })
 }
