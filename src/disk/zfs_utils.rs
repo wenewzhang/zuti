@@ -241,17 +241,18 @@ pub fn get_pool_extra_props(poolname: &str) -> Option<PoolExtraProps> {
 #[derive(Debug, Clone, Serialize)]
 pub struct PoolDevice {
     pub name: String,
+    pub size: String,
 }
 
 /// 递归提取 vdev 信息
-/// 传入: key, vdev_type, vdevs_value
-/// 返回: Vec<(key, vdev_type)>
-pub fn extract_vdevs_info(key: &str, vdev_type: &str, vdevs: &Value) -> Vec<(String, String)> {
+/// 传入: key, vdev_type, size, vdevs_value
+/// 返回: Vec<(key, vdev_type, size)>
+pub fn extract_vdevs_info(key: &str, vdev_type: &str, size: &str, vdevs: &Value) -> Vec<(String, String, String)> {
     let mut result = Vec::new();
     
-    // 添加当前节点
-    result.push((key.to_string(), vdev_type.to_string()));
-    eprintln!("=== extract_vdevs_info: key='{}', vdev_type='{}' ===", key, vdev_type);
+    // 添加当前节点，size 直接使用参数
+    result.push((key.to_string(), vdev_type.to_string(), size.to_string()));
+    eprintln!("=== extract_vdevs_info: key='{}', vdev_type='{}', size={} ===", key, vdev_type, size);
     
     // 递归处理嵌套的 vdevs
     if let Some(vdevs_obj) = vdevs.as_object() {
@@ -261,15 +262,28 @@ pub fn extract_vdevs_info(key: &str, vdev_type: &str, vdevs: &Value) -> Vec<(Str
                 .unwrap_or("")
                 .to_string();
             
-            // 递归调用，传入子节点的 key, vdev_type 和其嵌套的 vdevs
+            // 根据 vdev_type 获取 size：disk 取 phys_space，其他取 total_space
+            let size_str = if child_vdev_type == "disk" {
+                vdev.get("phys_space")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("0")
+                    .to_string()
+            } else {
+                vdev.get("total_space")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("0")
+                    .to_string()
+            };
+            
+            // 递归调用，传入子节点的 key, vdev_type, size 和其嵌套的 vdevs
             if let Some(nested_vdevs) = vdev.get("vdevs") {
                 eprintln!("=== 发现嵌套 vdevs in '{}'，递归调用 ===", vdev_key);
-                let nested = extract_vdevs_info(vdev_key, &child_vdev_type, nested_vdevs);
+                let nested = extract_vdevs_info(vdev_key, &child_vdev_type, &size_str, nested_vdevs);
                 result.extend(nested);
             } else {
                 // 叶子节点，没有嵌套 vdevs
-                result.push((vdev_key.clone(), child_vdev_type.clone()));
-                eprintln!("=== 叶子节点: key='{}', vdev_type='{}' ===", vdev_key, child_vdev_type);
+                result.push((vdev_key.clone(), child_vdev_type.clone(), size_str.clone()));
+                eprintln!("=== 叶子节点: key='{}', vdev_type='{}', size={} ===", vdev_key, child_vdev_type, size_str);
             }
         }
     }
@@ -314,11 +328,14 @@ pub fn get_pool_devices(poolname: &str) -> Result<Vec<PoolDevice>, String> {
                     let pool_vdev_type = pool_info.get("vdev_type")
                         .and_then(|n| n.as_str())
                         .unwrap_or("root");
-                    let vdev_list = extract_vdevs_info(pool_name, pool_vdev_type, vdevs);
-                    for (vdev_key, vdev_type) in &vdev_list {
-                        eprintln!("=== VDEV key: '{}', vdev_type: '{}' ===", vdev_key, vdev_type);
+                    let vdev_list = extract_vdevs_info(pool_name, pool_vdev_type, "0", vdevs);
+                    for (vdev_key, vdev_type, size) in &vdev_list {
+                        eprintln!("=== VDEV key: '{}', vdev_type: '{}', size={} ===", vdev_key, vdev_type, size);
                     }
-                    devices = vdev_list.into_iter().map(|(name, _)| PoolDevice { name }).collect();
+                    devices = vdev_list.into_iter()
+                        .filter(|(_, vdev_type, _)| vdev_type == "disk")
+                        .map(|(name, _, size)| PoolDevice { name, size })
+                        .collect();
                 }
             }
         }
