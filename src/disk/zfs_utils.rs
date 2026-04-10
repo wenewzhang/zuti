@@ -261,17 +261,29 @@ pub fn get_pool_devices(poolname: &str) -> Result<Vec<PoolDevice>, String> {
 
     fn extract_disks(vdevs: &Value, devices: &mut Vec<PoolDevice>) {
         if let Some(arr) = vdevs.as_array() {
-            if let Some(vdev) = arr.first() {
-                if vdev["type"].as_str() == Some("disk") {
-                    if let Some(name) = vdev["name"].as_str() {
-                        devices.push(PoolDevice {
-                            name: name.to_string(),
-                        });
+            // 只取 vdevs 的第一项数据
+            if let Some(first_vdev) = arr.first() {
+                // 从第一项中获取 children 并遍历其中的磁盘
+                if let Some(children) = first_vdev["children"].as_array() {
+                    for child in children {
+                        extract_disk_recursive(child, devices);
                     }
                 }
-                if let Some(children) = vdev["children"].as_array() {
-                    extract_disks(&Value::Array(children.clone()), devices);
-                }
+            }
+        }
+    }
+
+    fn extract_disk_recursive(vdev: &Value, devices: &mut Vec<PoolDevice>) {
+        if vdev["type"].as_str() == Some("disk") {
+            if let Some(name) = vdev["name"].as_str() {
+                devices.push(PoolDevice {
+                    name: name.to_string(),
+                });
+            }
+        }
+        if let Some(children) = vdev["children"].as_array() {
+            for child in children {
+                extract_disk_recursive(child, devices);
             }
         }
     }
