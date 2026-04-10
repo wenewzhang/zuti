@@ -767,6 +767,7 @@ pub async fn create_pool(
         "raidz1" => 3,
         "raidz2" => 4,
         "raidz3" => 5,
+        "raid10" => 4,
         _ => {
             return HttpResponse::BadRequest().json(CreatePoolResponse {
                 success: false,
@@ -841,6 +842,20 @@ pub async fn create_pool(
             args.push(pool_name.clone());
             args.push("raidz3".to_string());
             args.extend(device_by_ids);
+        }
+        "raid10" => {
+            if device_by_ids.len() < 2 || device_by_ids.len() % 2 != 0 {
+                return HttpResponse::BadRequest().json(CreatePoolResponse {
+                    success: false,
+                    message: "RAID10 requires an even number of disks (at least 2)".to_string(),
+                    error: Some("Invalid number of disks for RAID10".to_string()),
+                });
+            }
+            args.push(pool_name.clone());
+            for chunk in device_by_ids.chunks(2) {
+                args.push("mirror".to_string());
+                args.extend(chunk.iter().cloned());
+            }
         }
         _ => {
             return HttpResponse::BadRequest().json(CreatePoolResponse {
