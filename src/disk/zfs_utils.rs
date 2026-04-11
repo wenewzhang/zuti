@@ -282,7 +282,8 @@ pub fn extract_vdevs_info(key: &str, vdev_type: &str, size: &str, vdevs: &Value)
                 result.extend(nested);
             } else {
                 // 叶子节点，没有嵌套 vdevs
-                result.push((vdev_key.clone(), child_vdev_type.clone(), size_str.clone()));
+                let new_vdev_key = format!("{}/{}", key, vdev_key);
+                result.push((new_vdev_key, child_vdev_type.clone(), size_str.clone()));
                 // eprintln!("=== 叶子节点: key='{}', vdev_type='{}', size={} ===", vdev_key, child_vdev_type, size_str);
             }
         }
