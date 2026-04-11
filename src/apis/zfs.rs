@@ -1525,6 +1525,7 @@ pub struct GetPoolDevicesRequest {
 #[derive(Serialize)]
 pub struct PoolDeviceInfo {
     pub name: String,
+    pub size: String,
 }
 
 #[derive(Serialize)]
@@ -1565,7 +1566,7 @@ pub async fn get_pool_devices_handler(
     match crate::disk::get_pool_devices(poolname) {
         Ok(devices) => HttpResponse::Ok().json(GetPoolDevicesResponse {
             success: true,
-            data: Some(devices.into_iter().map(|d| PoolDeviceInfo { name: d.name }).collect()),
+            data: Some(devices.into_iter().map(|d| PoolDeviceInfo { name: d.name, size: d.size }).collect()),
             error: None,
         }),
         Err(e) => HttpResponse::InternalServerError().json(GetPoolDevicesResponse {
