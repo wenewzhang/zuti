@@ -1703,6 +1703,7 @@ pub async fn device_replace(
 pub struct DeviceAttachRequest {
     pub poolname: String,
     pub device: String,
+    pub new_device: String,
 }
 
 /// Device Attach 响应结构体
@@ -1713,11 +1714,12 @@ pub struct DeviceAttachResponse {
     pub error: Option<String>,
 }
 
-/// zfs/attach_device API - 将设备附加到 ZFS pool（需要 JWT 认证，仅管理员可用）
+/// zfs/attach_device API - 将新设备附加到 ZFS pool 的现有设备上（需要 JWT 认证，仅管理员可用）
 /// 
 /// 传入参数:
 /// - poolname: pool 名称
-/// - device: 设备名称（如 "sdb"），会自动在 /dev/disk/by-id/ 查找对应的长名称
+/// - device: 现有设备名称（如 GUID 或设备路径），直接使用传入值
+/// - new_device: 新设备名称（如 "sdb"），会自动在 /dev/disk/by-id/ 查找对应的长名称
 #[post("/zfs/attach_device")]
 pub async fn attach_device(
     req: HttpRequest,
@@ -1732,6 +1734,7 @@ pub async fn attach_device(
 
     let poolname = &attach_req.poolname;
     let device = &attach_req.device;
+    let new_device = &attach_req.new_device;
 
     // 2. 验证 poolname 不为空
     if poolname.is_empty() {
@@ -1751,7 +1754,16 @@ pub async fn attach_device(
         });
     }
 
-    // 4. 验证 poolname 名称合法性
+    // 4. 验证 new_device 不为空
+    if new_device.is_empty() {
+        return HttpResponse::BadRequest().json(DeviceAttachResponse {
+            success: false,
+            message: "New device is required".to_string(),
+            error: Some("new_device cannot be empty".to_string()),
+        });
+    }
+
+    // 5. 验证 poolname 名称合法性
     if !poolname.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.') {
         return HttpResponse::BadRequest().json(DeviceAttachResponse {
             success: false,
@@ -1760,22 +1772,23 @@ pub async fn attach_device(
         });
     }
 
-    // 5. 使用 disk 模块的 get_device_by_id 查找设备的长名称
-    let device_long_id = match crate::disk::get_device_by_id(device) {
+    // 6. 使用 disk 模块的 get_device_by_id 查找新设备的长名称
+    let new_device_long_id = match crate::disk::get_device_by_id(new_device) {
         Ok(id) => id,
         Err(e) => {
             return HttpResponse::BadRequest().json(DeviceAttachResponse {
                 success: false,
-                message: format!("Failed to find long ID for device '{}'", device),
+                message: format!("Failed to find long ID for new device '{}'", new_device),
                 error: Some(e),
             });
         }
     };
 
-    // 6. 执行 zpool attach 命令
-    // zpool attach <poolname> <device>
+    // 7. 执行 zpool attach 命令
+    // zpool attach <poolname> <device> <new_device>
+    // device 直接使用传入值（可能是 GUID 或路径），new_device 使用转换后的长设备 ID
     match Command::new("zpool")
-        .args(["attach", poolname, &device_long_id])
+        .args(["attach", poolname, device, &new_device_long_id])
         .output()
     {
         Ok(output) => {
@@ -1783,8 +1796,8 @@ pub async fn attach_device(
                 HttpResponse::Ok().json(DeviceAttachResponse {
                     success: true,
                     message: format!(
-                        "Successfully initiated device attach to pool '{}': '{}' ({})",
-                        poolname, device, device_long_id
+                        "Successfully initiated device attach to pool '{}': '{}' -> '{}' ({})",
+                        poolname, device, new_device, new_device_long_id
                     ),
                     error: None,
                 })
