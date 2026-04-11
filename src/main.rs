@@ -242,6 +242,8 @@ async fn main() -> std::io::Result<()> {
             .service(apis::zfs::set_pool_advanced_setting)
             .service(apis::zfs::get_pool_devices_handler)
             .service(apis::zfs::device_replace)
+            .service(apis::zfs::attach_device)
+            .service(apis::zfs::detach_device)
     })
     .bind_openssl(&server_address, builder)?
     .run()

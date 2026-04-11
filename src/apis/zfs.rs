@@ -1698,6 +1698,212 @@ pub async fn device_replace(
     }
 }
 
+/// Device Attach 请求结构体
+#[derive(Deserialize, Debug)]
+pub struct DeviceAttachRequest {
+    pub poolname: String,
+    pub device: String,
+}
+
+/// Device Attach 响应结构体
+#[derive(Serialize)]
+pub struct DeviceAttachResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// zfs/attach_device API - 将设备附加到 ZFS pool（需要 JWT 认证，仅管理员可用）
+/// 
+/// 传入参数:
+/// - poolname: pool 名称
+/// - device: 设备名称（如 "sdb"），会自动在 /dev/disk/by-id/ 查找对应的长名称
+#[post("/zfs/attach_device")]
+pub async fn attach_device(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    attach_req: web::Json<DeviceAttachRequest>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let poolname = &attach_req.poolname;
+    let device = &attach_req.device;
+
+    // 2. 验证 poolname 不为空
+    if poolname.is_empty() {
+        return HttpResponse::BadRequest().json(DeviceAttachResponse {
+            success: false,
+            message: "Pool name is required".to_string(),
+            error: Some("poolname cannot be empty".to_string()),
+        });
+    }
+
+    // 3. 验证 device 不为空
+    if device.is_empty() {
+        return HttpResponse::BadRequest().json(DeviceAttachResponse {
+            success: false,
+            message: "Device is required".to_string(),
+            error: Some("device cannot be empty".to_string()),
+        });
+    }
+
+    // 4. 验证 poolname 名称合法性
+    if !poolname.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.') {
+        return HttpResponse::BadRequest().json(DeviceAttachResponse {
+            success: false,
+            message: "Invalid pool name format".to_string(),
+            error: Some("Pool name must contain only alphanumeric characters, underscores, hyphens, or dots".to_string()),
+        });
+    }
+
+    // 5. 使用 disk 模块的 get_device_by_id 查找设备的长名称
+    let device_long_id = match crate::disk::get_device_by_id(device) {
+        Ok(id) => id,
+        Err(e) => {
+            return HttpResponse::BadRequest().json(DeviceAttachResponse {
+                success: false,
+                message: format!("Failed to find long ID for device '{}'", device),
+                error: Some(e),
+            });
+        }
+    };
+
+    // 6. 执行 zpool attach 命令
+    // zpool attach <poolname> <device>
+    match Command::new("zpool")
+        .args(["attach", poolname, &device_long_id])
+        .output()
+    {
+        Ok(output) => {
+            if output.status.success() {
+                HttpResponse::Ok().json(DeviceAttachResponse {
+                    success: true,
+                    message: format!(
+                        "Successfully initiated device attach to pool '{}': '{}' ({})",
+                        poolname, device, device_long_id
+                    ),
+                    error: None,
+                })
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                HttpResponse::InternalServerError().json(DeviceAttachResponse {
+                    success: false,
+                    message: format!("Failed to attach device to pool '{}'", poolname),
+                    error: Some(stderr.to_string()),
+                })
+            }
+        }
+        Err(e) => {
+            HttpResponse::InternalServerError().json(DeviceAttachResponse {
+                success: false,
+                message: format!("Failed to execute zpool attach for pool '{}'", poolname),
+                error: Some(e.to_string()),
+            })
+        }
+    }
+}
+
+/// Device Detach 请求结构体
+#[derive(Deserialize, Debug)]
+pub struct DeviceDetachRequest {
+    pub poolname: String,
+    pub device: String,
+}
+
+/// Device Detach 响应结构体
+#[derive(Serialize)]
+pub struct DeviceDetachResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// zfs/detach_device API - 从 ZFS pool 分离设备（需要 JWT 认证，仅管理员可用）
+/// 
+/// 传入参数:
+/// - poolname: pool 名称
+/// - device: 设备名称（可以是短名称如 "sdb" 或设备路径）
+#[post("/zfs/detach_device")]
+pub async fn detach_device(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    detach_req: web::Json<DeviceDetachRequest>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let poolname = &detach_req.poolname;
+    let device = &detach_req.device;
+
+    // 2. 验证 poolname 不为空
+    if poolname.is_empty() {
+        return HttpResponse::BadRequest().json(DeviceDetachResponse {
+            success: false,
+            message: "Pool name is required".to_string(),
+            error: Some("poolname cannot be empty".to_string()),
+        });
+    }
+
+    // 3. 验证 device 不为空
+    if device.is_empty() {
+        return HttpResponse::BadRequest().json(DeviceDetachResponse {
+            success: false,
+            message: "Device is required".to_string(),
+            error: Some("device cannot be empty".to_string()),
+        });
+    }
+
+    // 4. 验证 poolname 名称合法性
+    if !poolname.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.') {
+        return HttpResponse::BadRequest().json(DeviceDetachResponse {
+            success: false,
+            message: "Invalid pool name format".to_string(),
+            error: Some("Pool name must contain only alphanumeric characters, underscores, hyphens, or dots".to_string()),
+        });
+    }
+
+    // 5. 执行 zpool detach 命令
+    // zpool detach <poolname> <device>
+    match Command::new("zpool")
+        .args(["detach", poolname, device])
+        .output()
+    {
+        Ok(output) => {
+            if output.status.success() {
+                HttpResponse::Ok().json(DeviceDetachResponse {
+                    success: true,
+                    message: format!(
+                        "Successfully detached device '{}' from pool '{}'",
+                        device, poolname
+                    ),
+                    error: None,
+                })
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                HttpResponse::InternalServerError().json(DeviceDetachResponse {
+                    success: false,
+                    message: format!("Failed to detach device from pool '{}'", poolname),
+                    error: Some(stderr.to_string()),
+                })
+            }
+        }
+        Err(e) => {
+            HttpResponse::InternalServerError().json(DeviceDetachResponse {
+                success: false,
+                message: format!("Failed to execute zpool detach for pool '{}'", poolname),
+                error: Some(e.to_string()),
+            })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
