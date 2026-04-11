@@ -592,3 +592,12 @@ pool devices
 curl -k -X GET "https://192.168.3.203:8443/zfs/get_pool_devices?poolname=one-pool" \
   -H "Authorization: Bearer $TOKEN" 
 ```
+
+device replace
+```
+  curl -k -X POST https://192.168.3.203:8443/zfs/device_replace \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $TOKEN"  \
+      -d '{"poolname": "rone", "old_device": "10749001888946606042", "new_device": "sdb"}'
+
+```

@@ -1577,6 +1577,127 @@ pub async fn get_pool_devices_handler(
     }
 }
 
+/// Device Replace 请求结构体
+#[derive(Deserialize, Debug)]
+pub struct DeviceReplaceRequest {
+    pub poolname: String,
+    pub old_device: String,
+    pub new_device: String,
+}
+
+/// Device Replace 响应结构体
+#[derive(Serialize)]
+pub struct DeviceReplaceResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// zfs/device_replace API - 替换 ZFS pool 中的设备（需要 JWT 认证，仅管理员可用）
+/// 
+/// 传入参数:
+/// - poolname: pool 名称
+/// - old_device: 旧设备名称（可以是 GUID 或设备路径）
+/// - new_device: 新设备名称（如 "sdb"），会自动在 /dev/disk/by-id/ 查找对应的长名称
+#[post("/zfs/device_replace")]
+pub async fn device_replace(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    replace_req: web::Json<DeviceReplaceRequest>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let poolname = &replace_req.poolname;
+    let old_device = &replace_req.old_device;
+    let new_device = &replace_req.new_device;
+
+    // 2. 验证 poolname 不为空
+    if poolname.is_empty() {
+        return HttpResponse::BadRequest().json(DeviceReplaceResponse {
+            success: false,
+            message: "Pool name is required".to_string(),
+            error: Some("poolname cannot be empty".to_string()),
+        });
+    }
+
+    // 3. 验证 old_device 不为空
+    if old_device.is_empty() {
+        return HttpResponse::BadRequest().json(DeviceReplaceResponse {
+            success: false,
+            message: "Old device is required".to_string(),
+            error: Some("old_device cannot be empty".to_string()),
+        });
+    }
+
+    // 4. 验证 new_device 不为空
+    if new_device.is_empty() {
+        return HttpResponse::BadRequest().json(DeviceReplaceResponse {
+            success: false,
+            message: "New device is required".to_string(),
+            error: Some("new_device cannot be empty".to_string()),
+        });
+    }
+
+    // 5. 验证 poolname 名称合法性
+    if !poolname.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.') {
+        return HttpResponse::BadRequest().json(DeviceReplaceResponse {
+            success: false,
+            message: "Invalid pool name format".to_string(),
+            error: Some("Pool name must contain only alphanumeric characters, underscores, hyphens, or dots".to_string()),
+        });
+    }
+
+    // 6. 使用 disk 模块的 get_device_by_id 查找新设备的长名称
+    let new_device_long_id = match crate::disk::get_device_by_id(new_device) {
+        Ok(id) => id,
+        Err(e) => {
+            return HttpResponse::BadRequest().json(DeviceReplaceResponse {
+                success: false,
+                message: format!("Failed to find long ID for new device '{}'", new_device),
+                error: Some(e),
+            });
+        }
+    };
+
+    // 7. 执行 zpool replace 命令
+    // zpool replace <poolname> <old_device> <new_device>
+    match Command::new("zpool")
+        .args(["replace", poolname, old_device, &new_device_long_id])
+        .output()
+    {
+        Ok(output) => {
+            if output.status.success() {
+                HttpResponse::Ok().json(DeviceReplaceResponse {
+                    success: true,
+                    message: format!(
+                        "Successfully initiated device replace in pool '{}': '{}' -> '{}' ({})",
+                        poolname, old_device, new_device, new_device_long_id
+                    ),
+                    error: None,
+                })
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                HttpResponse::InternalServerError().json(DeviceReplaceResponse {
+                    success: false,
+                    message: format!("Failed to replace device in pool '{}'", poolname),
+                    error: Some(stderr.to_string()),
+                })
+            }
+        }
+        Err(e) => {
+            HttpResponse::InternalServerError().json(DeviceReplaceResponse {
+                success: false,
+                message: format!("Failed to execute zpool replace for pool '{}'", poolname),
+                error: Some(e.to_string()),
+            })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
