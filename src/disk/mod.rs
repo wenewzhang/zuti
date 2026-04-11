@@ -5,6 +5,6 @@ pub mod disk;
 pub mod lsblk;
 pub mod zfs_utils;
 
-pub use disk::get_free_disks;
+pub use disk::{get_free_disks, get_device_by_id, find_partition_by_id, find_disk_by_id};
 pub use lsblk::{get_all_disks, DiskBasicInfo};
 pub use zfs_utils::{get_datasets, get_pool_devices, get_zfs_disks, DatasetDetail, PoolDevice};

@@ -2,7 +2,7 @@ use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
-use crate::disk::{get_free_disks as get_free_disk_list, DiskBasicInfo};
+use crate::disk::{get_free_disks as get_free_disk_list, DiskBasicInfo, get_device_by_id};
 use crate::utils::admin::validate_token_with_db;
 
 
@@ -613,124 +613,6 @@ pub struct CreatePoolResponse {
     pub success: bool,
     pub message: String,
     pub error: Option<String>,
-}
-
-/// 在 /dev/disk/by-id/ 下查找设备的长 ID
-fn find_disk_by_id(device: &str) -> Result<String, String> {
-    let is_partition = device.chars().last().map(|c| c.is_ascii_digit()).unwrap_or(false);
-    let device_path = format!("/dev/{}", device);
-    
-    let entries = match std::fs::read_dir("/dev/disk/by-id/") {
-        Ok(entries) => entries,
-        Err(e) => return Err(format!("Failed to read /dev/disk/by-id/: {}", e)),
-    };
-    
-    for entry in entries {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        
-        let path = entry.path();
-        let file_name = match entry.file_name().into_string() {
-            Ok(name) => name,
-            Err(_) => continue,
-        };
-        
-        if file_name.starts_with("scsi-") || file_name.starts_with("ata-") || 
-           file_name.starts_with("nvme-") || file_name.starts_with("wwn-") {
-            match std::fs::canonicalize(&path) {
-                Ok(real_path) => {
-                    if is_partition {
-                        if real_path.to_string_lossy().ends_with(device) {
-                            if file_name.starts_with("ata-") || file_name.starts_with("nvme-eui.") {
-                                return Ok(path.to_string_lossy().to_string());
-                            }
-                        }
-                    } else {
-                        let real_path_str = real_path.to_string_lossy();
-                        if real_path_str == device_path {
-                            if file_name.starts_with("ata-") || 
-                               (file_name.starts_with("nvme-") && !file_name.contains("-part")) {
-                                return Ok(path.to_string_lossy().to_string());
-                            }
-                        }
-                    }
-                }
-                Err(_) => continue,
-            }
-        }
-    }
-    
-    Err(format!("Cannot find long ID for device '{}' in /dev/disk/by-id/", device))
-}
-
-/// 查找设备的分区 long ID
-fn find_partition_by_id(disk_name: &str, part_suffix: &str) -> Result<String, String> {
-    let device_path = format!("/dev/{}{}", disk_name, part_suffix);
-    
-    let entries = match std::fs::read_dir("/dev/disk/by-id/") {
-        Ok(entries) => entries,
-        Err(e) => return Err(format!("Failed to read /dev/disk/by-id/: {}", e)),
-    };
-    
-    for entry in entries {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        
-        let path = entry.path();
-        let file_name = match entry.file_name().into_string() {
-            Ok(name) => name,
-            Err(_) => continue,
-        };
-        
-        if file_name.contains("-part") {
-            match std::fs::canonicalize(&path) {
-                Ok(real_path) => {
-                    if real_path.to_string_lossy() == device_path {
-                        return Ok(path.to_string_lossy().to_string());
-                    }
-                }
-                Err(_) => continue,
-            }
-        }
-    }
-    
-    Err(format!("Cannot find partition ID for '{}{}'", disk_name, part_suffix))
-}
-
-/// 获取设备的 by-id 路径
-fn get_device_by_id(device: &str) -> Result<String, String> {
-    let is_partition = device.chars().last().map(|c| c.is_ascii_digit()).unwrap_or(false);
-    
-    if is_partition {
-        if device.starts_with("nvme") {
-            if let Some(pos) = device.rfind('p') {
-                let disk_name = &device[..pos];
-                let part_suffix = &device[pos..]; // 包含 p
-                return find_partition_by_id(disk_name, part_suffix);
-            }
-        } else {
-            let chars: Vec<char> = device.chars().collect();
-            let mut num_start = chars.len();
-            for (i, c) in chars.iter().enumerate().rev() {
-                if c.is_ascii_digit() {
-                    num_start = i;
-                } else {
-                    break;
-                }
-            }
-            if num_start < chars.len() {
-                let disk_name: String = chars[..num_start].iter().collect();
-                let part_num: String = chars[num_start..].iter().collect();
-                return find_partition_by_id(&disk_name, &part_num);
-            }
-        }
-    }
-    
-    find_disk_by_id(device)
 }
 
 // create_pool API - 创建 ZFS 存储池（需要 JWT 认证）
