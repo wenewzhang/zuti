@@ -1917,6 +1917,162 @@ pub async fn detach_device(
     }
 }
 
+/// Create Dataset 请求结构体
+#[derive(Deserialize)]
+pub struct CreateDatasetRequest {
+    pub old_dataset: String,  // 例如: "one-pool/ROOT"
+    pub new_name: String,     // 例如: "new_dataset"
+}
+
+/// Create Dataset 响应结构体
+#[derive(Serialize)]
+pub struct CreateDatasetResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// zfs/create_dataset API - 创建新的 ZFS dataset（需要 JWT 认证，仅管理员可用）
+/// 
+/// 传入参数:
+/// - old_dataset: 父 dataset 路径
+/// - new_name: 新 dataset 名称
+/// 
+/// 执行命令: zfs create old_dataset/new_name
+#[post("/zfs/create_dataset")]
+pub async fn create_dataset(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    create_req: web::Json<CreateDatasetRequest>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let old_dataset = &create_req.old_dataset;
+    let new_name = &create_req.new_name;
+
+    // 2. 验证 old_dataset 不为空
+    if old_dataset.is_empty() {
+        return HttpResponse::BadRequest().json(CreateDatasetResponse {
+            success: false,
+            message: "Old dataset is required".to_string(),
+            error: Some("old_dataset cannot be empty".to_string()),
+        });
+    }
+
+    // 3. 验证 new_name 不为空
+    if new_name.is_empty() {
+        return HttpResponse::BadRequest().json(CreateDatasetResponse {
+            success: false,
+            message: "New name is required".to_string(),
+            error: Some("new_name cannot be empty".to_string()),
+        });
+    }
+
+    // 4. 验证 old_dataset 名称合法性
+    // ZFS dataset 名称允许: 字母、数字、下划线、连字符、点、斜杠
+    if !old_dataset.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/') {
+        return HttpResponse::BadRequest().json(CreateDatasetResponse {
+            success: false,
+            message: "Invalid old_dataset name format".to_string(),
+            error: Some("Old dataset name must contain only alphanumeric characters, underscores, hyphens, dots, or slashes".to_string()),
+        });
+    }
+
+    // 5. 验证 new_name 名称合法性
+    // dataset 名称允许: 字母、数字、下划线、连字符、点
+    if !new_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.') {
+        return HttpResponse::BadRequest().json(CreateDatasetResponse {
+            success: false,
+            message: "Invalid new_name format".to_string(),
+            error: Some("New name must contain only alphanumeric characters, underscores, hyphens, or dots".to_string()),
+        });
+    }
+
+    // 6. 检查 old_dataset 是否存在
+    let check_output = match Command::new("zfs")
+        .args(["list", "-H", old_dataset])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(CreateDatasetResponse {
+                success: false,
+                message: "Failed to check old_dataset existence".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    if !check_output.status.success() {
+        let stderr = String::from_utf8_lossy(&check_output.stderr);
+        return HttpResponse::BadRequest().json(CreateDatasetResponse {
+            success: false,
+            message: format!("Parent dataset '{}' does not exist", old_dataset),
+            error: Some(stderr.to_string()),
+        });
+    }
+
+    // 7. 构建完整的 dataset 路径
+    let full_dataset_path = format!("{}/{}", old_dataset, new_name);
+
+    // 8. 检查新 dataset 是否已存在
+    let check_new_output = match Command::new("zfs")
+        .args(["list", "-H", &full_dataset_path])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(CreateDatasetResponse {
+                success: false,
+                message: "Failed to check new dataset existence".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    if check_new_output.status.success() {
+        return HttpResponse::BadRequest().json(CreateDatasetResponse {
+            success: false,
+            message: format!("Dataset '{}' already exists", full_dataset_path),
+            error: Some("Dataset already exists".to_string()),
+        });
+    }
+
+    // 9. 执行 zfs create 命令
+    match Command::new("zfs")
+        .args(["create", &full_dataset_path])
+        .output()
+    {
+        Ok(output) => {
+            if output.status.success() {
+                HttpResponse::Ok().json(CreateDatasetResponse {
+                    success: true,
+                    message: format!("Successfully created dataset '{}'", full_dataset_path),
+                    error: None,
+                })
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                HttpResponse::InternalServerError().json(CreateDatasetResponse {
+                    success: false,
+                    message: format!("Failed to create dataset '{}'", full_dataset_path),
+                    error: Some(stderr.to_string()),
+                })
+            }
+        }
+        Err(e) => {
+            HttpResponse::InternalServerError().json(CreateDatasetResponse {
+                success: false,
+                message: format!("Failed to execute zfs create for '{}'", full_dataset_path),
+                error: Some(e.to_string()),
+            })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

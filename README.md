@@ -601,3 +601,11 @@ device replace
       -d '{"poolname": "rone", "old_device": "10749001888946606042", "new_device": "sdb"}'
 
 ```
+
+Create dataset
+```
+  curl -X POST http://192.168.3.203:8443/zfs/create_dataset \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $TOKEN" \
+    -d '{"old_dataset":"one-pool/ROOT","new_name":"new_dataset"}'
+```
