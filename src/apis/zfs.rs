@@ -1274,6 +1274,8 @@ pub struct PoolAdvancedSettings {
     pub sync: String,
     pub compression: String,
     pub checksum: String,
+    pub autoexpand: String,
+    pub reservation: String,
 }
 
 /// Pool 高级设置 GET 响应结构体
@@ -1303,6 +1305,8 @@ pub struct PoolAdvancedSettingPostRequest {
     pub sync: Option<String>,
     pub compression: Option<String>,
     pub checksum: Option<String>,
+    pub autoexpand: Option<String>,
+    pub reservation: Option<String>,
 }
 
 /// Pool 高级设置 POST 响应结构体
@@ -1319,6 +1323,7 @@ fn get_dataset_advanced_properties(dataset: &str) -> Option<PoolAdvancedSettings
         "primarycache", "quota", "mountpoint", "recordsize", "atime",
         "relatime", "readonly", "aclmode", "aclinherit", "acltype",
         "canmount", "logbias", "sync", "compression", "checksum",
+        "autoexpand", "reservation",
     ];
     let props_str = props.join(",");
     
@@ -1348,6 +1353,8 @@ fn get_dataset_advanced_properties(dataset: &str) -> Option<PoolAdvancedSettings
         sync: String::new(),
         compression: String::new(),
         checksum: String::new(),
+        autoexpand: String::new(),
+        reservation: String::new(),
     };
     
     for line in stdout.lines() {
@@ -1371,6 +1378,8 @@ fn get_dataset_advanced_properties(dataset: &str) -> Option<PoolAdvancedSettings
                 "sync" => settings.sync = value.to_string(),
                 "compression" => settings.compression = value.to_string(),
                 "checksum" => settings.checksum = value.to_string(),
+                "autoexpand" => settings.autoexpand = value.to_string(),
+                "reservation" => settings.reservation = value.to_string(),
                 _ => {}
             }
         }
@@ -1495,6 +1504,8 @@ pub async fn set_pool_advanced_setting(
         ("sync", setting_req.sync.as_ref()),
         ("compression", setting_req.compression.as_ref()),
         ("checksum", setting_req.checksum.as_ref()),
+        ("autoexpand", setting_req.autoexpand.as_ref()),
+        ("reservation", setting_req.reservation.as_ref()),
     ];
 
     // 逐个设置属性
