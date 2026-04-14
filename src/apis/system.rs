@@ -61,9 +61,9 @@ pub async fn reboot_system(
     req: HttpRequest,
     pool: web::Data<crate::DbPool>,
 ) -> impl Responder {
-    // 1. 验证 JWT token 并检查 admin 权限
-    let _username = match verify_admin_access(&req, &pool).await {
-        Ok(username) => username,
+    // 1. 验证 JWT token
+    let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
+        Ok(claims) => claims,
         Err(response) => return response,
     };
 
@@ -112,9 +112,9 @@ pub async fn shutdown_system(
     req: HttpRequest,
     pool: web::Data<crate::DbPool>,
 ) -> impl Responder {
-    // 1. 验证 JWT token 并检查 admin 权限
-    let _username = match verify_admin_access(&req, &pool).await {
-        Ok(username) => username,
+    // 1. 验证 JWT token
+    let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
+        Ok(claims) => claims,
         Err(response) => return response,
     };
 
