@@ -486,19 +486,19 @@ root@onenas:~# findmnt -n -o SOURCE /
 
   1. 重启系统 API
 
-  • 端点: POST /zfs/reboot
+  • 端点: POST /system/reboot
   • 权限: 需要 JWT 认证 + 管理员权限
   • 命令: systemctl reboot
 ```
-  curl -k -X POST "https://192.168.3.203:8443/zfs/reboot" -H "Authorization: Bearer ${TOKEN}"
+  curl -k -X POST "https://192.168.3.203:8443/system/reboot" -H "Authorization: Bearer ${TOKEN}"
 ```
   2. 关闭系统 API
 
-  • 端点: POST /zfs/shutdown
+  • 端点: POST /system/shutdown
   • 权限: 需要 JWT 认证 + 管理员权限
   • 命令: systemctl poweroff
 ```
-  curl -k -X POST "https://192.168.3.203:8443/zfs/shutdown" \
+  curl -k -X POST "https://192.168.3.203:8443/system/shutdown" \
       -H "Authorization: Bearer ${TOKEN}"
 ```
 
