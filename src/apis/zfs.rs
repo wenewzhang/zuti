@@ -516,8 +516,8 @@ pub async fn clone_dataset(
     if !new_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.') {
         return HttpResponse::BadRequest().json(CloneDatasetResponse {
             success: false,
-            message: "Invalid new_name format".to_string(),
-            error: Some("new_name must contain only alphanumeric characters, underscores, hyphens, or dots".to_string()),
+            message: "Invalid new name format".to_string(),
+            error: Some("new name must contain only alphanumeric characters, underscores, hyphens, or dots".to_string()),
         });
     }
 
@@ -1968,7 +1968,7 @@ pub async fn create_dataset(
         return HttpResponse::BadRequest().json(CreateDatasetResponse {
             success: false,
             message: "New name is required".to_string(),
-            error: Some("new_name cannot be empty".to_string()),
+            error: Some("new name cannot be empty".to_string()),
         });
     }
 
@@ -1987,7 +1987,7 @@ pub async fn create_dataset(
     if !new_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.') {
         return HttpResponse::BadRequest().json(CreateDatasetResponse {
             success: false,
-            message: "Invalid new_name format".to_string(),
+            message: "Invalid new name format".to_string(),
             error: Some("New name must contain only alphanumeric characters, underscores, hyphens, or dots".to_string()),
         });
     }
