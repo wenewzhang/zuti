@@ -1323,7 +1323,7 @@ fn get_dataset_advanced_properties(dataset: &str) -> Option<PoolAdvancedSettings
         "primarycache", "quota", "mountpoint", "recordsize", "atime",
         "relatime", "readonly", "aclmode", "aclinherit", "acltype",
         "canmount", "logbias", "sync", "compression", "checksum",
-        "autoexpand", "reservation",
+        "reservation",
     ];
     let props_str = props.join(",");
     
@@ -1378,9 +1378,25 @@ fn get_dataset_advanced_properties(dataset: &str) -> Option<PoolAdvancedSettings
                 "sync" => settings.sync = value.to_string(),
                 "compression" => settings.compression = value.to_string(),
                 "checksum" => settings.checksum = value.to_string(),
-                "autoexpand" => settings.autoexpand = value.to_string(),
                 "reservation" => settings.reservation = value.to_string(),
                 _ => {}
+            }
+        }
+    }
+    
+    // autoexpand 是 pool 级属性，需要使用 zpool get
+    let pool_name = dataset.split('/').next().unwrap_or(dataset);
+    let zpool_output = Command::new("zpool")
+        .args(["get", "autoexpand", "-H", "-o", "property,value", pool_name])
+        .output()
+        .ok()?;
+    
+    if zpool_output.status.success() {
+        let zpool_stdout = String::from_utf8_lossy(&zpool_output.stdout);
+        for line in zpool_stdout.lines() {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 2 && parts[0].trim() == "autoexpand" {
+                settings.autoexpand = parts[1].trim().to_string();
             }
         }
     }
@@ -1390,15 +1406,30 @@ fn get_dataset_advanced_properties(dataset: &str) -> Option<PoolAdvancedSettings
 
 /// 设置单个 ZFS 属性
 fn set_zfs_property(dataset: &str, property: &str, value: &str) -> Result<(), String> {
-    let output = Command::new("zfs")
-        .args(["set", &format!("{}={}", property, value), dataset])
-        .output()
-        .map_err(|e| format!("Command error: {}", e))?;
-    
-    if output.status.success() {
-        Ok(())
+    if property == "autoexpand" {
+        // autoexpand 是 pool 级属性，需要使用 zpool set
+        let pool_name = dataset.split('/').next().unwrap_or(dataset);
+        let output = Command::new("zpool")
+            .args(["set", &format!("{}={}", property, value), pool_name])
+            .output()
+            .map_err(|e| format!("Command error: {}", e))?;
+        
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).to_string())
+        }
     } else {
-        Err(String::from_utf8_lossy(&output.stderr).to_string())
+        let output = Command::new("zfs")
+            .args(["set", &format!("{}={}", property, value), dataset])
+            .output()
+            .map_err(|e| format!("Command error: {}", e))?;
+        
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).to_string())
+        }
     }
 }
 
