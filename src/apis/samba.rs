@@ -131,7 +131,7 @@ pub struct SmbListUsersResponse {
 }
 
 // smb_public_share API - 创建公共 Samba 共享配置（需要 JWT 认证）
-#[post("/smb/public_share")]
+#[post("/smb/create_public_share")]
 pub async fn smb_public_share(
     req: HttpRequest,
     share_req: web::Json<SmbPublicShareRequest>,
@@ -279,7 +279,7 @@ pub async fn smb_public_share(
 }
 
 // smb_auth_share API - 创建认证 Samba 共享配置（需要 JWT 认证）
-#[post("/smb/auth_share")]
+#[post("/smb/create_private_share")]
 pub async fn smb_auth_share(
     req: HttpRequest,
     share_req: web::Json<SmbAuthShareRequest>,

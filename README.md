@@ -151,7 +151,7 @@ smb public share
 ```
 
 
-  curl -k -X POST https://192.168.3.203:8443/smb/public_share \
+  curl -k -X POST https://192.168.3.203:8443/smb/create_public_share \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
@@ -165,7 +165,7 @@ smb public share
 
 smb auth share
 ```
-  curl  -k -X POST https://192.168.3.203:8443/smb/auth_share \
+  curl  -k -X POST https://192.168.3.203:8443/smb/create_private_share \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
