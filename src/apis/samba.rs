@@ -1,4 +1,4 @@
-use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
+use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
 use diesel::prelude::*;
 use ini::Ini;
 use serde::{Deserialize, Serialize};
