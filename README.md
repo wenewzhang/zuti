@@ -228,14 +228,14 @@ create zfs pool
 
 list zfs shares
 ```
-  curl -k -X POST https://192.168.3.203:8443/smb/list_zfs_shares \
+  curl -k -X GET https://192.168.3.203:8443/smb/list_zfs_shares \
       -H "Authorization: Bearer $TOKEN"
 
 ```
 
 list directory shares
 ```
-  curl -k -X POST https://192.168.3.203:8443/smb/list_dir_shares \
+  curl -k -X GET https://192.168.3.203:8443/smb/list_dir_shares \
       -H "Authorization: Bearer $TOKEN"
 
 ```

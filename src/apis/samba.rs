@@ -1299,7 +1299,7 @@ pub struct ListZfsSmbSharesResponse {
 
 // list_zfs_shares API - 获取所有启用了 SMB 共享的 ZFS dataset 列表（需要 JWT 认证）
 // 执行命令: zfs get -H -o name,value sharesmb | grep "on$"
-#[post("/smb/list_zfs_shares")]
+#[get("/smb/list_zfs_shares")]
 pub async fn list_zfs_shares(
     req: HttpRequest,
     pool: web::Data<crate::DbPool>,
@@ -1383,7 +1383,7 @@ pub struct ListDirSharesResponse {
 }
 
 // list_dir_shares API - 读取 /etc/samba/conf.d/public.conf 和 private.conf 中的所有共享名称（需要 JWT 认证）
-#[post("/smb/list_dir_shares")]
+#[get("/smb/list_dir_shares")]
 pub async fn list_dir_shares(
     req: HttpRequest,
     pool: web::Data<crate::DbPool>,
