@@ -1370,6 +1370,7 @@ pub async fn list_zfs_shares(
 #[derive(Serialize)]
 pub struct DirShareInfo {
     pub name: String,       // 共享名称（section title）
+    pub r#type: String,     // 共享类型：public / private
 }
 
 // List Directory Shares 响应结构体
@@ -1405,6 +1406,7 @@ pub async fn list_dir_shares(
                     if let Some(name) = section {
                         shares.push(DirShareInfo {
                             name: name.to_string(),
+                            r#type: "public".to_string(),
                         });
                     }
                 }
@@ -1429,6 +1431,7 @@ pub async fn list_dir_shares(
                     if let Some(name) = section {
                         shares.push(DirShareInfo {
                             name: name.to_string(),
+                            r#type: "private".to_string(),
                         });
                     }
                 }
