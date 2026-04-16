@@ -2169,10 +2169,11 @@ pub async fn update_zfs_share(
     pool: web::Data<crate::DbPool>,
     body: web::Json<UpdateZfsShareRequest>,
 ) -> impl Responder {
-    // 验证 JWT token
-    if let Err(response) = validate_token_with_db(&req, &pool).await {
-        return response;
-    }
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };    
 
     let dataset = &body.dataset;
 
