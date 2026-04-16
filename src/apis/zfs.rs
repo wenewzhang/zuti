@@ -1970,6 +1970,168 @@ pub async fn create_dataset(
     }
 }
 
+/// ZFS Share Info 数据
+#[derive(Serialize)]
+pub struct ZfsShareInfoData {
+    pub owner: String,
+    pub permission: String,        // "readonly" or "write"
+    pub guest_permission: String,  // "readonly" or "write"
+}
+
+/// ZFS Share Info 响应结构体
+#[derive(Serialize)]
+pub struct ZfsShareInfoResponse {
+    pub success: bool,
+    pub data: Option<ZfsShareInfoData>,
+    pub error: Option<String>,
+}
+
+/// 通过 uid 获取用户名
+fn get_username_by_uid(uid: u32) -> Option<String> {
+    Command::new("id")
+        .args(["-nu", &uid.to_string()])
+        .output()
+        .ok()
+        .and_then(|output| {
+            if output.status.success() {
+                Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+            } else {
+                None
+            }
+        })
+}
+
+/// 通过目录路径查找对应的 ZFS dataset
+fn get_dataset_by_mountpoint(mountpoint: &str) -> Option<String> {
+    let output = Command::new("zfs")
+        .args(["list", "-H", "-o", "name,mountpoint"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() >= 2 && parts[1] == mountpoint {
+            return Some(parts[0].to_string());
+        }
+    }
+    None
+}
+
+/// 获取 ZFS dataset 的 readonly 属性
+fn get_dataset_readonly(dataset: &str) -> Option<String> {
+    let output = Command::new("zfs")
+        .args(["get", "-H", "-o", "value", "readonly", dataset])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+/// zfs/share_info API - 获取指定目录的共享信息（需要 JWT 认证）
+#[get("/zfs/zfs_share_info")]
+pub async fn zfs_share_info(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    query: web::Query<std::collections::HashMap<String, String>>,
+) -> impl Responder {
+    // 验证 JWT token
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
+    let directory = match query.get("directory") {
+        Some(d) => d,
+        None => {
+            return HttpResponse::BadRequest().json(ZfsShareInfoResponse {
+                success: false,
+                data: None,
+                error: Some("directory parameter is required".to_string()),
+            });
+        }
+    };
+
+    // 检查目录是否存在
+    let path = std::path::Path::new(directory);
+    if !path.exists() || !path.is_dir() {
+        return HttpResponse::BadRequest().json(ZfsShareInfoResponse {
+            success: false,
+            data: None,
+            error: Some(format!("Directory '{}' does not exist or is not a directory", directory)),
+        });
+    }
+
+    for forbid_dir in FORBID_DIRECTORY {
+        if directory == *forbid_dir || directory.starts_with(&format!("{}/", forbid_dir)) || directory == "/" {
+            return HttpResponse::BadRequest().json(ZfsShareInfoResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Directory '{}' is not allowed for sharing", forbid_dir)),
+            });
+        }
+    }
+
+    // 获取目录的 metadata
+    let metadata = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to get directory metadata: {}", e)),
+            });
+        }
+    };
+
+    use std::os::unix::fs::MetadataExt;
+    let uid = metadata.uid();
+    let mode = metadata.mode();
+
+    // 获取用户名
+    let owner = get_username_by_uid(uid).unwrap_or_else(|| uid.to_string());
+
+    // 查找对应的 ZFS dataset 并获取 readonly 属性
+    let zfs_readonly = get_dataset_by_mountpoint(directory)
+        .and_then(|dataset| get_dataset_readonly(&dataset))
+        .map(|v| v == "on")
+        .unwrap_or(false);
+
+    // 判断权限
+    let owner_permission = if zfs_readonly {
+        "readonly".to_string()
+    } else if mode & 0o200 != 0 {
+        "write".to_string()
+    } else {
+        "readonly".to_string()
+    };
+
+    let guest_permission = if zfs_readonly {
+        "readonly".to_string()
+    } else if mode & 0o002 != 0 {
+        "write".to_string()
+    } else {
+        "readonly".to_string()
+    };
+
+    HttpResponse::Ok().json(ZfsShareInfoResponse {
+        success: true,
+        data: Some(ZfsShareInfoData {
+            owner,
+            permission: owner_permission,
+            guest_permission,
+        }),
+        error: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

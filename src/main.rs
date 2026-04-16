@@ -245,6 +245,7 @@ async fn main() -> std::io::Result<()> {
             .service(apis::zfs::attach_device)
             .service(apis::zfs::detach_device)
             .service(apis::zfs::create_dataset)
+            .service(apis::zfs::zfs_share_info)
     })
     .bind_openssl(&server_address, builder)?
     .run()
