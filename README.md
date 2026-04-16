@@ -609,3 +609,9 @@ Create dataset
     -H "Authorization: Bearer $TOKEN" \
     -d '{"old_dataset":"one-pool/ROOT","new_name":"new_dataset"}'
 ```
+
+ZFS share info
+```
+curl -k -X GET "https://192.168.3.203:8443/zfs/zfs_share_info?dataset=wrty546/ffff/mynas" \
+  -H "Authorization: Bearer $TOKEN" 
+```

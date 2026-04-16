@@ -2048,19 +2048,40 @@ pub async fn zfs_share_info(
         return response;
     }
 
-    let directory = match query.get("directory") {
+    let dataset = match query.get("dataset") {
         Some(d) => d,
         None => {
             return HttpResponse::BadRequest().json(ZfsShareInfoResponse {
                 success: false,
                 data: None,
-                error: Some("directory parameter is required".to_string()),
+                error: Some("dataset parameter is required".to_string()),
             });
         }
     };
+    let output = match Command::new("zfs")
+        .args(["get", "-H", "-o", "value", "mountpoint", dataset])
+        .output()
+    {
+        Ok(output) => output,
+        Err(_) => {
+            return HttpResponse::BadRequest().json(ZfsShareInfoResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to get mountpoint for dataset '{}'", dataset)),
+            });
+        }
+    };
+    if !output.status.success() {
+        return HttpResponse::BadRequest().json(ZfsShareInfoResponse {
+            success: false,
+            data: None,
+            error: Some(format!("Failed to get mountpoint for dataset '{}'", dataset)),
+        });
+    }
+    let directory = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     // 检查目录是否存在
-    let path = std::path::Path::new(directory);
+    let path = std::path::Path::new(&directory);
     if !path.exists() || !path.is_dir() {
         return HttpResponse::BadRequest().json(ZfsShareInfoResponse {
             success: false,
@@ -2099,7 +2120,7 @@ pub async fn zfs_share_info(
     let owner = get_username_by_uid(uid).unwrap_or_else(|| uid.to_string());
 
     // 查找对应的 ZFS dataset 并获取 readonly 属性
-    let zfs_readonly = get_dataset_by_mountpoint(directory)
+    let zfs_readonly = get_dataset_by_mountpoint(&directory)
         .and_then(|dataset| get_dataset_readonly(&dataset))
         .map(|v| v == "on")
         .unwrap_or(false);
