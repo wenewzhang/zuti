@@ -1978,6 +1978,15 @@ pub struct ZfsShareInfoData {
     pub guest_permission: String,  // "readonly" or "write"
 }
 
+/// 更新 ZFS share 请求体
+#[derive(Deserialize)]
+pub struct UpdateZfsShareRequest {
+    pub dataset: String,
+    pub owner: String,
+    pub permission: String,
+    pub guest_permission: String,
+}
+
 /// ZFS Share Info 响应结构体
 #[derive(Serialize)]
 pub struct ZfsShareInfoResponse {
@@ -2149,6 +2158,205 @@ pub async fn zfs_share_info(
             permission: owner_permission,
             guest_permission,
         }),
+        error: None,
+    })
+}
+
+/// smb/update_zfs_share API - 更新指定 ZFS dataset 的共享权限（需要 JWT 认证）
+#[post("/smb/update_zfs_share")]
+pub async fn update_zfs_share(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    body: web::Json<UpdateZfsShareRequest>,
+) -> impl Responder {
+    // 验证 JWT token
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
+    let dataset = &body.dataset;
+
+    // 获取 dataset 的 mountpoint
+    let output = match Command::new("zfs")
+        .args(["get", "-H", "-o", "value", "mountpoint", dataset])
+        .output()
+    {
+        Ok(output) => output,
+        Err(_) => {
+            return HttpResponse::BadRequest().json(ZfsShareInfoResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to get mountpoint for dataset '{}'", dataset)),
+            });
+        }
+    };
+    if !output.status.success() {
+        return HttpResponse::BadRequest().json(ZfsShareInfoResponse {
+            success: false,
+            data: None,
+            error: Some(format!("Failed to get mountpoint for dataset '{}'", dataset)),
+        });
+    }
+    let directory = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    // 检查目录是否存在
+    let path = std::path::Path::new(&directory);
+    if !path.exists() || !path.is_dir() {
+        return HttpResponse::BadRequest().json(ZfsShareInfoResponse {
+            success: false,
+            data: None,
+            error: Some(format!(
+                "Directory '{}' does not exist or is not a directory",
+                directory
+            )),
+        });
+    }
+
+    // 检查禁止目录
+    for forbid_dir in FORBID_DIRECTORY {
+        if directory == *forbid_dir
+            || directory.starts_with(&format!("{}/", forbid_dir))
+            || directory == "/"
+        {
+            return HttpResponse::BadRequest().json(ZfsShareInfoResponse {
+                success: false,
+                data: None,
+                error: Some(format!(
+                    "Directory '{}' is not allowed for sharing",
+                    forbid_dir
+                )),
+            });
+        }
+    }
+
+    let is_all_readonly = body.permission == "readonly" && body.guest_permission == "readonly";
+
+    if is_all_readonly {
+        // 直接设置 dataset readonly=on
+        let output = match Command::new("zfs")
+            .args(["set", "readonly=on", dataset])
+            .output()
+        {
+            Ok(output) => output,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!(
+                        "Failed to set readonly=on for dataset '{}': {}",
+                        dataset, e
+                    )),
+                });
+            }
+        };
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+                success: false,
+                data: None,
+                error: Some(format!(
+                    "Failed to set readonly=on for dataset '{}': {}",
+                    dataset, stderr
+                )),
+            });
+        }
+    } else {
+        // 先确保 readonly=off
+        let output = match Command::new("zfs")
+            .args(["set", "readonly=off", dataset])
+            .output()
+        {
+            Ok(output) => output,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!(
+                        "Failed to set readonly=off for dataset '{}': {}",
+                        dataset, e
+                    )),
+                });
+            }
+        };
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+                success: false,
+                data: None,
+                error: Some(format!(
+                    "Failed to set readonly=off for dataset '{}': {}",
+                    dataset, stderr
+                )),
+            });
+        }
+
+        // 修改 mountpoint 的 owner
+        let output = match Command::new("chown")
+            .args(["-R", &format!("{}:{}", body.owner, body.owner), &directory])
+            .output()
+        {
+            Ok(output) => output,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!(
+                        "Failed to chown for directory '{}': {}",
+                        directory, e
+                    )),
+                });
+            }
+        };
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+                success: false,
+                data: None,
+                error: Some(format!(
+                    "Failed to chown for directory '{}': {}",
+                    directory, stderr
+                )),
+            });
+        }
+
+        // 修改 mountpoint 的权限
+        let owner_mod = if body.permission == "readonly" { "u-w" } else { "u+w" };
+        let group_mod = if body.permission == "readonly" { "g-w" } else { "g+w" };
+        let guest_mod = if body.guest_permission == "readonly" { "o-w" } else { "o+w" };
+        let chmod_arg = format!("{},{},{}", owner_mod, group_mod, guest_mod);
+
+        let output = match Command::new("chmod")
+            .args(["-R", &chmod_arg, &directory])
+            .output()
+        {
+            Ok(output) => output,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!(
+                        "Failed to chmod for directory '{}': {}",
+                        directory, e
+                    )),
+                });
+            }
+        };
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+                success: false,
+                data: None,
+                error: Some(format!(
+                    "Failed to chmod for directory '{}': {}",
+                    directory, stderr
+                )),
+            });
+        }
+    }
+
+    HttpResponse::Ok().json(ZfsShareInfoResponse {
+        success: true,
+        data: None,
         error: None,
     })
 }
