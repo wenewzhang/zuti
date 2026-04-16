@@ -2321,7 +2321,7 @@ pub async fn update_zfs_share(
 
         // 修改 mountpoint 的权限
         let owner_mod = if body.permission == "readonly" { "u-w" } else { "u+w" };
-        let group_mod = if body.permission == "readonly" { "g-w" } else { "g+w" };
+        let group_mod = if body.guest_permission == "readonly" { "g-w" } else { "g+w" };
         let guest_mod = if body.guest_permission == "readonly" { "o-w" } else { "o+w" };
         let chmod_arg = format!("{},{},{}", owner_mod, group_mod, guest_mod);
 
