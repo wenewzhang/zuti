@@ -615,3 +615,11 @@ ZFS share info
 curl -k -X GET "https://192.168.3.203:8443/zfs/zfs_share_info?dataset=wrty546/ffff/mynas" \
   -H "Authorization: Bearer $TOKEN" 
 ```
+
+Close ZFS share
+```
+curl -k -X POST "https://192.168.3.203:8443/zfs/close_zfs_share" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"dataset": "mypool/mydataset"}'
+```

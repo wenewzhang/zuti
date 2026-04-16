@@ -2362,6 +2362,77 @@ pub async fn update_zfs_share(
     })
 }
 
+#[derive(Deserialize)]
+pub struct CloseZfsShareRequest {
+    pub dataset: String,
+}
+
+#[derive(Serialize)]
+pub struct CloseZfsShareResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+#[post("/zfs/close_zfs_share")]
+pub async fn close_zfs_share(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    body: web::Json<CloseZfsShareRequest>,
+) -> impl Responder {
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let dataset = &body.dataset;
+
+    if dataset.is_empty() {
+        return HttpResponse::BadRequest().json(CloseZfsShareResponse {
+            success: false,
+            message: "Dataset name is required".to_string(),
+            error: Some("dataset cannot be empty".to_string()),
+        });
+    }
+
+    if !dataset.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/') {
+        return HttpResponse::BadRequest().json(CloseZfsShareResponse {
+            success: false,
+            message: "Invalid dataset name format".to_string(),
+            error: Some("Dataset name must contain only alphanumeric characters, underscores, hyphens, dots, or slashes".to_string()),
+        });
+    }
+
+    match Command::new("zfs")
+        .args(["set", "sharesmb=off", dataset])
+        .output()
+    {
+        Ok(output) => {
+            if output.status.success() {
+                HttpResponse::Ok().json(CloseZfsShareResponse {
+                    success: true,
+                    message: format!("Successfully closed SMB share for dataset '{}'", dataset),
+                    error: None,
+                })
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                HttpResponse::InternalServerError().json(CloseZfsShareResponse {
+                    success: false,
+                    message: format!("Failed to close SMB share for dataset '{}'", dataset),
+                    error: Some(stderr.to_string()),
+                })
+            }
+        }
+        Err(e) => {
+            HttpResponse::InternalServerError().json(CloseZfsShareResponse {
+                success: false,
+                message: format!("Failed to execute zfs set command for dataset '{}'", dataset),
+                error: Some(e.to_string()),
+            })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
