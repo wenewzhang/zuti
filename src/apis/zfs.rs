@@ -43,6 +43,14 @@ pub struct DatasetsResponse {
     pub error: Option<String>,
 }
 
+/// Samba Datasets 响应结构体
+#[derive(Serialize)]
+pub struct SambaDatasetsResponse {
+    pub success: bool,
+    pub data: Option<Vec<DatasetInfo>>,
+    pub error: Option<String>,
+}
+
 /// Bootfs 数据结构体
 #[derive(Serialize)]
 pub struct BootfsData {
@@ -84,6 +92,70 @@ pub async fn get_datasets(req: HttpRequest, pool: web::Data<crate::DbPool>) -> i
     HttpResponse::Ok().json(DatasetsResponse {
         success: true,
         data: Some(dataset_infos),
+        error: None,
+    })
+}
+
+/// zfs/samba_datasets API - 获取所有可用于 Samba 共享的 ZFS filesystem datasets（需要 JWT 认证）
+/// 过滤条件：mountpoint 不能是 none，且不能位于 FORBID_DIRECTORY 下
+#[get("/zfs/samba_datasets")]
+pub async fn get_samba_datasets(req: HttpRequest, pool: web::Data<crate::DbPool>) -> impl Responder {
+    // 验证 JWT token
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
+    // 执行 zfs list -t filesystem -o name,mountpoint -H
+    let output = match Command::new("zfs")
+        .args(["list", "-t", "filesystem", "-o", "name,mountpoint", "-H"])
+        .output()
+    {
+        Ok(result) => String::from_utf8_lossy(&result.stdout).to_string(),
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SambaDatasetsResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to execute zfs list: {}", e)),
+            });
+        }
+    };
+
+    let mut datasets = Vec::new();
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.len() >= 2 {
+            let name = parts[0].to_string();
+            let mountpoint = parts[1].to_string();
+
+            // 过滤 mountpoint 为 none 的 dataset
+            if mountpoint == "none" || mountpoint == "-" {
+                continue;
+            }
+
+            // 过滤 FORBID_DIRECTORY 下的 dataset
+            let mut forbidden = false;
+            for &forbid_dir in FORBID_DIRECTORY {
+                if mountpoint == forbid_dir || mountpoint.starts_with(&format!("{}/", forbid_dir)) || mountpoint == "/" {
+                    forbidden = true;
+                    break;
+                }
+            }
+
+            if !forbidden {
+                datasets.push(DatasetInfo { name, mountpoint });
+            }
+        }
+    }
+
+    HttpResponse::Ok().json(SambaDatasetsResponse {
+        success: true,
+        data: Some(datasets),
         error: None,
     })
 }

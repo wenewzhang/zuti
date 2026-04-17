@@ -229,6 +229,7 @@ async fn main() -> std::io::Result<()> {
             .service(apis::zfs::clone_dataset)
             .service(apis::zfs::promote_dataset)
             .service(apis::zfs::get_datasets)
+            .service(apis::zfs::get_samba_datasets)
             .service(apis::zfs::destroy_dataset)
             .service(apis::zfs::get_dataset_depends)
             .service(apis::zfs::online_pools)
