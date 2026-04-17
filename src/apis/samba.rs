@@ -1287,7 +1287,10 @@ pub async fn create_zfs_share(
 // ZFS SMB Share 信息
 #[derive(Serialize)]
 pub struct ZfsSmbShareInfo {
-    pub dataset: String,  // 数据集名称，如 "tank/myshare"
+    pub dataset: String,         // 数据集名称，如 "tank/myshare"
+    pub owner: String,           // 目录所有者
+    pub permission: String,      // 所有者权限: write / readonly
+    pub guest_permission: String,// 访客权限: write / readonly
 }
 
 // List ZFS SMB Shares 响应结构体
@@ -1342,8 +1345,76 @@ pub async fn list_zfs_shares(
             for line in stdout.lines() {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 2 && parts[1] == "on" {
+                    let dataset = parts[0].to_string();
+
+                    // 获取 dataset 的 mountpoint
+                    let mountpoint_output = Command::new("zfs")
+                        .args(["get", "-H", "-o", "value", "mountpoint", &dataset])
+                        .output();
+
+                    let (owner, permission, guest_permission) = match mountpoint_output {
+                        Ok(mp_result) if mp_result.status.success() => {
+                            let mountpoint = String::from_utf8_lossy(&mp_result.stdout).trim().to_string();
+                            let path = std::path::Path::new(&mountpoint);
+                            if path.exists() && path.is_dir() {
+                                match std::fs::metadata(path) {
+                                    Ok(metadata) => {
+                                        use std::os::unix::fs::MetadataExt;
+                                        let uid = metadata.uid();
+                                        let mode = metadata.mode();
+                                        let owner_name = Command::new("id")
+                                            .args(["-nu", &uid.to_string()])
+                                            .output()
+                                            .ok()
+                                            .and_then(|out| {
+                                                if out.status.success() {
+                                                    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .unwrap_or_else(|| uid.to_string());
+
+                                        // 获取 readonly 属性
+                                        let readonly = Command::new("zfs")
+                                            .args(["get", "-H", "-o", "value", "readonly", &dataset])
+                                            .output()
+                                            .ok()
+                                            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string() == "on")
+                                            .unwrap_or(false);
+
+                                        let owner_perm = if readonly {
+                                            "readonly".to_string()
+                                        } else if mode & 0o200 != 0 {
+                                            "write".to_string()
+                                        } else {
+                                            "readonly".to_string()
+                                        };
+
+                                        let guest_perm = if readonly {
+                                            "readonly".to_string()
+                                        } else if mode & 0o002 != 0 {
+                                            "write".to_string()
+                                        } else {
+                                            "readonly".to_string()
+                                        };
+
+                                        (owner_name, owner_perm, guest_perm)
+                                    }
+                                    Err(_) => ("unknown".to_string(), "readonly".to_string(), "readonly".to_string()),
+                                }
+                            } else {
+                                ("unknown".to_string(), "readonly".to_string(), "readonly".to_string())
+                            }
+                        }
+                        _ => ("unknown".to_string(), "readonly".to_string(), "readonly".to_string()),
+                    };
+
                     share_list.push(ZfsSmbShareInfo {
-                        dataset: parts[0].to_string(),
+                        dataset,
+                        owner,
+                        permission,
+                        guest_permission,
                     });
                 }
             }

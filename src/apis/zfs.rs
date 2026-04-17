@@ -2048,6 +2048,7 @@ pub struct ZfsShareInfoData {
     pub owner: String,
     pub permission: String,        // "readonly" or "write"
     pub guest_permission: String,  // "readonly" or "write"
+    pub quota: String,             // quota value, e.g. "none" or "10G"
 }
 
 /// 更新 ZFS share 请求体
@@ -2200,11 +2201,28 @@ pub async fn zfs_share_info(
     // 获取用户名
     let owner = get_username_by_uid(uid).unwrap_or_else(|| uid.to_string());
 
-    // 查找对应的 ZFS dataset 并获取 readonly 属性
-    let zfs_readonly = get_dataset_by_mountpoint(&directory)
-        .and_then(|dataset| get_dataset_readonly(&dataset))
-        .map(|v| v == "on")
-        .unwrap_or(false);
+    // 查找对应的 ZFS dataset 并获取 readonly 和 quota 属性
+    let (zfs_readonly, quota) = match get_dataset_by_mountpoint(&directory) {
+        Some(ds) => {
+            let readonly = get_dataset_readonly(&ds)
+                .map(|v| v == "on")
+                .unwrap_or(false);
+            let quota_val = Command::new("zfs")
+                .args(["get", "-H", "-o", "value", "quota", &ds])
+                .output()
+                .ok()
+                .and_then(|out| {
+                    if out.status.success() {
+                        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| "none".to_string());
+            (readonly, quota_val)
+        }
+        None => (false, "none".to_string()),
+    };
 
     // 判断权限
     let owner_permission = if zfs_readonly {
@@ -2229,6 +2247,7 @@ pub async fn zfs_share_info(
             owner,
             permission: owner_permission,
             guest_permission,
+            quota,
         }),
         error: None,
     })
