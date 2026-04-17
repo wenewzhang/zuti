@@ -1060,8 +1060,8 @@ pub async fn create_zfs_share(
         });
     }
 
-    // 4. 验证 quota 格式（简单检查是否以 G, M, T, P 等结尾或纯数字）
-    if !quota.is_empty() {
+    // 4. 验证 quota 格式（简单检查是否以 G, M, T, P 等结尾或纯数字，或为 none）
+    if !quota.is_empty() && quota.to_lowercase() != "none" {
         let quota_upper = quota.to_uppercase();
         let valid_suffixes = ['M', 'G', 'T', 'P', 'E'];
         let is_valid = quota_upper.chars().all(|c| c.is_ascii_digit() || valid_suffixes.contains(&c));
@@ -1069,7 +1069,7 @@ pub async fn create_zfs_share(
             return HttpResponse::BadRequest().json(CreateZfsShareResponse {
                 success: false,
                 message: "Invalid quota format".to_string(),
-                error: Some("Quota must be a number optionally followed by M, G, T, P, or E".to_string()),
+                error: Some("Quota must be a number optionally followed by M, G, T, P, or E, or 'none'".to_string()),
             });
         }
     }
@@ -1173,36 +1173,38 @@ pub async fn create_zfs_share(
         }
     }
 
-    // Step 2: zfs set quota=<quota> <pool>/<share_name>
-    let output = Command::new("zfs")
-        .args([
-            "set",
-            &format!("quota={}", quota),
-            &dataset,
-        ])
-        .output();
+    // Step 2: zfs set quota=<quota> <pool>/<share_name>（quota 为 none 时跳过）
+    if quota.to_lowercase() != "none" {
+        let output = Command::new("zfs")
+            .args([
+                "set",
+                &format!("quota={}", quota),
+                &dataset,
+            ])
+            .output();
 
-    match output {
-        Ok(result) => {
-            if !result.status.success() {
-                let stderr = String::from_utf8_lossy(&result.stderr);
+        match output {
+            Ok(result) => {
+                if !result.status.success() {
+                    let stderr = String::from_utf8_lossy(&result.stderr);
+                    // 尝试删除已创建的 dataset
+                    let _ = Command::new("zfs").args(["destroy", &dataset]).output();
+                    return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                        success: false,
+                        message: format!("Failed to set quota: {}", quota),
+                        error: Some(format!("{}", stderr)),
+                    });
+                }
+            }
+            Err(e) => {
                 // 尝试删除已创建的 dataset
                 let _ = Command::new("zfs").args(["destroy", &dataset]).output();
                 return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
                     success: false,
-                    message: format!("Failed to set quota: {}", quota),
-                    error: Some(format!("{}", stderr)),
+                    message: format!("Failed to execute zfs set quota: {}", quota),
+                    error: Some(format!("{}", e)),
                 });
             }
-        }
-        Err(e) => {
-            // 尝试删除已创建的 dataset
-            let _ = Command::new("zfs").args(["destroy", &dataset]).output();
-            return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
-                success: false,
-                message: format!("Failed to execute zfs set quota: {}", quota),
-                error: Some(format!("{}", e)),
-            });
         }
     }
 
