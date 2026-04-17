@@ -1004,7 +1004,7 @@ pub async fn list_pools(
 #[derive(Deserialize)]
 pub struct CreateZfsShareRequest {
     pub share_name: String,      // 共享名称（dataset 名称）
-    pub pool_name: String,       // ZFS pool 名称
+    pub dataset_name: String,       // ZFS pool 名称
     pub quota: String,           // 容量限制，如 "10G", "100M", "1T"
     pub samba_user: String,      // Samba 用户名（用于设置目录所有者）
 }
@@ -1036,11 +1036,11 @@ pub async fn create_zfs_share(
     };
 
     let share_name = &share_req.share_name;
-    let pool_name = &share_req.pool_name;
+    let dataset_name = &share_req.dataset_name;
     let quota = &share_req.quota;
     let samba_user = &share_req.samba_user;
     // 自动生成 mountpoint: /pool/share_name
-    let mountpoint = format!("/{}/{}", pool_name, share_name);
+    let mountpoint = format!("/{}/{}", dataset_name, share_name);
 
     // 2. 验证 share_name 合法性（只允许字母数字、下划线、连字符）
     if !share_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
@@ -1052,7 +1052,7 @@ pub async fn create_zfs_share(
     }
 
     // 3. 验证 pool_name 不为空
-    if pool_name.is_empty() {
+    if dataset_name.is_empty() {
         return HttpResponse::BadRequest().json(CreateZfsShareResponse {
             success: false,
             message: "Pool name cannot be empty".to_string(),
@@ -1102,7 +1102,7 @@ pub async fn create_zfs_share(
         }
     }
 
-    let dataset = format!("{}/{}", pool_name, share_name);
+    let dataset = format!("{}/{}", dataset_name, share_name);
     // mountpoint 自动生成: /pool/share_name
 
     // Step 0: 检查 dataset 是否已存在
@@ -1276,7 +1276,7 @@ pub async fn create_zfs_share(
         success: true,
         message: format!(
             "ZFS share '{}' created successfully on pool '{}', mounted at '{}' with quota '{}'",
-            share_name, pool_name, mountpoint, quota
+            share_name, dataset_name, mountpoint, quota
         ),
         error: None,
     })

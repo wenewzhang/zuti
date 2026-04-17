@@ -219,9 +219,9 @@ create zfs pool
       -H "Authorization: Bearer $TOKEN" \
       -d '{
           "share_name": "goodshare",
-          "pool_name": "datapool",
+          "dataset_name": "one-pool/tools",
           "quota": "1G",
-          "samba_user": "reader1"
+          "samba_user": "sb"
       }'
 
 ```
@@ -528,6 +528,12 @@ All Datasets
   curl -k -X GET https://192.168.3.203:8443/zfs/datasets \
       -H "Authorization: Bearer $TOKEN"
 
+```
+
+Samba Datasets
+```
+  curl -k -X GET https://192.168.3.203:8443/zfs/samba_datasets \
+      -H "Authorization: Bearer $TOKEN"
 ```
 
 Destroy Dataset
