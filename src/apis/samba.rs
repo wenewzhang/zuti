@@ -1596,8 +1596,8 @@ pub struct UpdatePrivateShareRequest {
     pub share_name: String,
     pub browseable: String,
     pub read_only: String,
-    pub valid_users: String,
-    pub write_list: String,
+    pub valid_users: Vec<String>,
+    pub write_list: Vec<String>,
 }
 
 // Update Private Share 响应结构体
@@ -2020,14 +2020,14 @@ pub async fn update_private_share(
         section
             .set("browseable", &share_req.browseable.to_lowercase())
             .set("read only", &share_req.read_only.to_lowercase())
-            .set("valid users", &share_req.valid_users);
+            .set("valid users", &share_req.valid_users.join(" "));
 
         // 如果 write_list 为空，则删除 write list 配置；否则更新
         if share_req.write_list.is_empty() {
             let key = "write list";
             section.delete(&key);
         } else {
-            section.set("write list", &share_req.write_list);
+            section.set("write list", &share_req.write_list.join(" "));
         }
     }
 
