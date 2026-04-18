@@ -1528,6 +1528,45 @@ pub async fn list_dir_shares(
     })
 }
 
+// Public Share Info 响应结构体
+#[derive(Serialize)]
+pub struct PublicShareInfoResponse {
+    pub success: bool,
+    pub share_name: String,
+    pub path: String,
+    pub browseable: String,
+    pub read_only: String,
+    pub guest_ok: String,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+// Public Share Info 请求结构体
+#[derive(Deserialize)]
+pub struct PublicShareInfoRequest {
+    pub share_name: String,
+}
+
+// Private Share Info 响应结构体
+#[derive(Serialize)]
+pub struct PrivateShareInfoResponse {
+    pub success: bool,
+    pub share_name: String,
+    pub path: String,
+    pub browseable: String,
+    pub read_only: String,
+    pub valid_users: String,
+    pub write_list: String,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+// Private Share Info 请求结构体
+#[derive(Deserialize)]
+pub struct PrivateShareInfoRequest {
+    pub share_name: String,
+}
+
 // Remove Directory Share 请求结构体
 #[derive(Deserialize)]
 pub struct RemoveDirShareRequest {
@@ -1540,6 +1579,197 @@ pub struct RemoveDirShareResponse {
     pub success: bool,
     pub message: String,
     pub error: Option<String>,
+}
+
+// public_share_info API - 获取 /etc/samba/conf.d/public.conf 中指定共享的详细信息（需要 JWT 认证）
+#[post("/smb/public_share_info")]
+pub async fn public_share_info(
+    req: HttpRequest,
+    info_req: web::Json<PublicShareInfoRequest>,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    let share_name = &info_req.share_name;
+
+    // 2. 验证 share_name 不为空
+    if share_name.is_empty() {
+        return HttpResponse::BadRequest().json(PublicShareInfoResponse {
+            success: false,
+            share_name: String::new(),
+            path: String::new(),
+            browseable: String::new(),
+            read_only: String::new(),
+            guest_ok: String::new(),
+            message: "Share name cannot be empty".to_string(),
+            error: Some("share_name is required".to_string()),
+        });
+    }
+
+    let conf_dir = Path::new("/etc/samba/conf.d");
+    let public_conf = conf_dir.join("public.conf");
+
+    // 3. 检查 public.conf 是否存在
+    if !public_conf.exists() {
+        return HttpResponse::NotFound().json(PublicShareInfoResponse {
+            success: false,
+            share_name: share_name.clone(),
+            path: String::new(),
+            browseable: String::new(),
+            read_only: String::new(),
+            guest_ok: String::new(),
+            message: "public.conf not found".to_string(),
+            error: Some("Configuration file does not exist".to_string()),
+        });
+    }
+
+    // 4. 读取 public.conf
+    let ini = match Ini::load_from_file(&public_conf) {
+        Ok(ini) => ini,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(PublicShareInfoResponse {
+                success: false,
+                share_name: share_name.clone(),
+                path: String::new(),
+                browseable: String::new(),
+                read_only: String::new(),
+                guest_ok: String::new(),
+                message: "Failed to parse public.conf".to_string(),
+                error: Some(format!("{}", e)),
+            });
+        }
+    };
+
+    // 5. 查找指定 share_name 的 section
+    let section = ini.section(Some(share_name));
+    match section {
+        Some(sec) => {
+            HttpResponse::Ok().json(PublicShareInfoResponse {
+                success: true,
+                share_name: share_name.clone(),
+                path: sec.get("path").unwrap_or("").to_string(),
+                browseable: sec.get("browseable").unwrap_or("").to_string(),
+                read_only: sec.get("read only").unwrap_or("").to_string(),
+                guest_ok: sec.get("guest ok").unwrap_or("").to_string(),
+                message: "Public share info retrieved successfully".to_string(),
+                error: None,
+            })
+        }
+        None => {
+            HttpResponse::NotFound().json(PublicShareInfoResponse {
+                success: false,
+                share_name: share_name.clone(),
+                path: String::new(),
+                browseable: String::new(),
+                read_only: String::new(),
+                guest_ok: String::new(),
+                message: format!("Share '{}' not found in public.conf", share_name),
+                error: Some("Share does not exist".to_string()),
+            })
+        }
+    }
+}
+
+// private_share_info API - 获取 /etc/samba/conf.d/private.conf 中指定共享的详细信息（需要 JWT 认证）
+#[post("/smb/private_share_info")]
+pub async fn private_share_info(
+    req: HttpRequest,
+    info_req: web::Json<PrivateShareInfoRequest>,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    let share_name = &info_req.share_name;
+
+    // 2. 验证 share_name 不为空
+    if share_name.is_empty() {
+        return HttpResponse::BadRequest().json(PrivateShareInfoResponse {
+            success: false,
+            share_name: String::new(),
+            path: String::new(),
+            browseable: String::new(),
+            read_only: String::new(),
+            valid_users: String::new(),
+            write_list: String::new(),
+            message: "Share name cannot be empty".to_string(),
+            error: Some("share_name is required".to_string()),
+        });
+    }
+
+    let conf_dir = Path::new("/etc/samba/conf.d");
+    let private_conf = conf_dir.join("private.conf");
+
+    // 3. 检查 private.conf 是否存在
+    if !private_conf.exists() {
+        return HttpResponse::NotFound().json(PrivateShareInfoResponse {
+            success: false,
+            share_name: share_name.clone(),
+            path: String::new(),
+            browseable: String::new(),
+            read_only: String::new(),
+            valid_users: String::new(),
+            write_list: String::new(),
+            message: "private.conf not found".to_string(),
+            error: Some("Configuration file does not exist".to_string()),
+        });
+    }
+
+    // 4. 读取 private.conf
+    let ini = match Ini::load_from_file(&private_conf) {
+        Ok(ini) => ini,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(PrivateShareInfoResponse {
+                success: false,
+                share_name: share_name.clone(),
+                path: String::new(),
+                browseable: String::new(),
+                read_only: String::new(),
+                valid_users: String::new(),
+                write_list: String::new(),
+                message: "Failed to parse private.conf".to_string(),
+                error: Some(format!("{}", e)),
+            });
+        }
+    };
+
+    // 5. 查找指定 share_name 的 section
+    let section = ini.section(Some(share_name));
+    match section {
+        Some(sec) => {
+            HttpResponse::Ok().json(PrivateShareInfoResponse {
+                success: true,
+                share_name: share_name.clone(),
+                path: sec.get("path").unwrap_or("").to_string(),
+                browseable: sec.get("browseable").unwrap_or("").to_string(),
+                read_only: sec.get("read only").unwrap_or("").to_string(),
+                valid_users: sec.get("valid users").unwrap_or("").to_string(),
+                write_list: sec.get("write list").unwrap_or("").to_string(),
+                message: "Private share info retrieved successfully".to_string(),
+                error: None,
+            })
+        }
+        None => {
+            HttpResponse::NotFound().json(PrivateShareInfoResponse {
+                success: false,
+                share_name: share_name.clone(),
+                path: String::new(),
+                browseable: String::new(),
+                read_only: String::new(),
+                valid_users: String::new(),
+                write_list: String::new(),
+                message: format!("Share '{}' not found in private.conf", share_name),
+                error: Some("Share does not exist".to_string()),
+            })
+        }
+    }
 }
 
 // remove_dir_share API - 删除 /etc/samba/conf.d/public.conf 或 private.conf 中的共享配置（需要 share/admin 权限）

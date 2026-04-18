@@ -193,6 +193,8 @@ async fn main() -> std::io::Result<()> {
             .service(apis::samba::create_zfs_share)
             .service(apis::samba::list_zfs_shares)
             .service(apis::samba::list_dir_shares)
+            .service(apis::samba::public_share_info)
+            .service(apis::samba::private_share_info)
             .service(apis::samba::remove_dir_share)
             .service(apis::samba::remove_zfs_share)
             .service(apis::docker::get_images)
