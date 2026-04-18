@@ -1573,6 +1573,40 @@ pub struct RemoveDirShareRequest {
     pub share_name: String,  // 要删除的共享名称（section title）
 }
 
+// Update Public Share 请求结构体
+#[derive(Deserialize)]
+pub struct UpdatePublicShareRequest {
+    pub share_name: String,
+    pub browseable: String,
+    pub guest_ok: String,
+}
+
+// Update Public Share 响应结构体
+#[derive(Serialize)]
+pub struct UpdatePublicShareResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+// Update Private Share 请求结构体
+#[derive(Deserialize)]
+pub struct UpdatePrivateShareRequest {
+    pub share_name: String,
+    pub browseable: String,
+    pub read_only: String,
+    pub valid_users: String,
+    pub write_list: String,
+}
+
+// Update Private Share 响应结构体
+#[derive(Serialize)]
+pub struct UpdatePrivateShareResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
 // Remove Directory Share 响应结构体
 #[derive(Serialize)]
 pub struct RemoveDirShareResponse {
@@ -1770,6 +1804,253 @@ pub async fn private_share_info(
             })
         }
     }
+}
+
+// update_public_share API - 更新 /etc/samba/conf.d/public.conf 中指定共享的配置（需要 JWT 认证）
+#[post("/smb/update_public_share")]
+pub async fn update_public_share(
+    req: HttpRequest,
+    share_req: web::Json<UpdatePublicShareRequest>,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _username = match crate::utils::verify_share_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let share_name = &share_req.share_name;
+
+    // 2. 验证 share_name 不为空
+    if share_name.is_empty() {
+        return HttpResponse::BadRequest().json(UpdatePublicShareResponse {
+            success: false,
+            message: "Share name cannot be empty".to_string(),
+            error: Some("share_name is required".to_string()),
+        });
+    }
+
+    // 3. 验证参数值（只能是 yes 或 no）
+    let valid_values = ["yes", "no"];
+
+    if !valid_values.contains(&share_req.browseable.to_lowercase().as_str()) {
+        return HttpResponse::BadRequest().json(UpdatePublicShareResponse {
+            success: false,
+            message: "Invalid browseable value".to_string(),
+            error: Some("browseable must be 'yes' or 'no'".to_string()),
+        });
+    }
+
+    if !valid_values.contains(&share_req.guest_ok.to_lowercase().as_str()) {
+        return HttpResponse::BadRequest().json(UpdatePublicShareResponse {
+            success: false,
+            message: "Invalid guest_ok value".to_string(),
+            error: Some("guest_ok must be 'yes' or 'no'".to_string()),
+        });
+    }
+
+    let conf_dir = Path::new("/etc/samba/conf.d");
+    let public_conf = conf_dir.join("public.conf");
+
+    // 4. 检查 public.conf 是否存在
+    if !public_conf.exists() {
+        return HttpResponse::NotFound().json(UpdatePublicShareResponse {
+            success: false,
+            message: "public.conf not found".to_string(),
+            error: Some("Configuration file does not exist".to_string()),
+        });
+    }
+
+    // 5. 加载 public.conf
+    let mut ini = match Ini::load_from_file(&public_conf) {
+        Ok(ini) => ini,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(UpdatePublicShareResponse {
+                success: false,
+                message: "Failed to parse public.conf".to_string(),
+                error: Some(format!("{}", e)),
+            });
+        }
+    };
+
+    // 6. 检查指定 share_name 的 section 是否存在
+    if ini.section(Some(share_name)).is_none() {
+        return HttpResponse::NotFound().json(UpdatePublicShareResponse {
+            success: false,
+            message: format!("Share '{}' not found in public.conf", share_name),
+            error: Some("Share does not exist".to_string()),
+        });
+    }
+
+    // 7. 更新 share section 的指定字段
+    ini.with_section(Some(share_name.to_string()))
+        .set("browseable", &share_req.browseable.to_lowercase())
+        .set("guest ok", &share_req.guest_ok.to_lowercase());
+
+    // 8. 写回文件
+    if let Err(e) = ini.write_to_file(&public_conf) {
+        return HttpResponse::InternalServerError().json(UpdatePublicShareResponse {
+            success: false,
+            message: "Failed to write public.conf".to_string(),
+            error: Some(format!("{}", e)),
+        });
+    }
+
+    // 9. 合并配置文件并重新加载 Samba 服务
+    if let Err(e) = merge_samba_configs() {
+        return HttpResponse::InternalServerError().json(UpdatePublicShareResponse {
+            success: false,
+            message: "Failed to merge samba configs".to_string(),
+            error: Some(e),
+        });
+    }
+    let _ = Command::new("systemctl")
+        .args(["restart", "smbd"])
+        .output();
+
+    HttpResponse::Ok().json(UpdatePublicShareResponse {
+        success: true,
+        message: format!(
+            "Samba public share '{}' updated successfully. Config saved to {}",
+            share_name,
+            public_conf.display()
+        ),
+        error: None,
+    })
+}
+
+// update_private_share API - 更新 /etc/samba/conf.d/private.conf 中指定共享的配置（需要 JWT 认证）
+#[post("/smb/update_private_share")]
+pub async fn update_private_share(
+    req: HttpRequest,
+    share_req: web::Json<UpdatePrivateShareRequest>,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _username = match crate::utils::verify_share_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let share_name = &share_req.share_name;
+
+    // 2. 验证 share_name 不为空
+    if share_name.is_empty() {
+        return HttpResponse::BadRequest().json(UpdatePrivateShareResponse {
+            success: false,
+            message: "Share name cannot be empty".to_string(),
+            error: Some("share_name is required".to_string()),
+        });
+    }
+
+    // 3. 验证参数值（只能是 yes 或 no）
+    let valid_values = ["yes", "no"];
+
+    if !valid_values.contains(&share_req.browseable.to_lowercase().as_str()) {
+        return HttpResponse::BadRequest().json(UpdatePrivateShareResponse {
+            success: false,
+            message: "Invalid browseable value".to_string(),
+            error: Some("browseable must be 'yes' or 'no'".to_string()),
+        });
+    }
+
+    if !valid_values.contains(&share_req.read_only.to_lowercase().as_str()) {
+        return HttpResponse::BadRequest().json(UpdatePrivateShareResponse {
+            success: false,
+            message: "Invalid read_only value".to_string(),
+            error: Some("read_only must be 'yes' or 'no'".to_string()),
+        });
+    }
+
+    // 4. 验证 valid_users 不为空
+    if share_req.valid_users.is_empty() {
+        return HttpResponse::BadRequest().json(UpdatePrivateShareResponse {
+            success: false,
+            message: "Invalid valid_users".to_string(),
+            error: Some("valid_users cannot be empty".to_string()),
+        });
+    }
+
+    let conf_dir = Path::new("/etc/samba/conf.d");
+    let private_conf = conf_dir.join("private.conf");
+
+    // 5. 检查 private.conf 是否存在
+    if !private_conf.exists() {
+        return HttpResponse::NotFound().json(UpdatePrivateShareResponse {
+            success: false,
+            message: "private.conf not found".to_string(),
+            error: Some("Configuration file does not exist".to_string()),
+        });
+    }
+
+    // 6. 加载 private.conf
+    let mut ini = match Ini::load_from_file(&private_conf) {
+        Ok(ini) => ini,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(UpdatePrivateShareResponse {
+                success: false,
+                message: "Failed to parse private.conf".to_string(),
+                error: Some(format!("{}", e)),
+            });
+        }
+    };
+
+    // 7. 检查指定 share_name 的 section 是否存在
+    if ini.section(Some(share_name)).is_none() {
+        return HttpResponse::NotFound().json(UpdatePrivateShareResponse {
+            success: false,
+            message: format!("Share '{}' not found in private.conf", share_name),
+            error: Some("Share does not exist".to_string()),
+        });
+    }
+
+    // 8. 更新 share section 的指定字段
+    {
+        let mut section = ini.with_section(Some(share_name.to_string()));
+        section
+            .set("browseable", &share_req.browseable.to_lowercase())
+            .set("read only", &share_req.read_only.to_lowercase())
+            .set("valid users", &share_req.valid_users);
+
+        // 如果 write_list 为空，则删除 write list 配置；否则更新
+        if share_req.write_list.is_empty() {
+            let key = "write list";
+            section.delete(&key);
+        } else {
+            section.set("write list", &share_req.write_list);
+        }
+    }
+
+    // 9. 写回文件
+    if let Err(e) = ini.write_to_file(&private_conf) {
+        return HttpResponse::InternalServerError().json(UpdatePrivateShareResponse {
+            success: false,
+            message: "Failed to write private.conf".to_string(),
+            error: Some(format!("{}", e)),
+        });
+    }
+
+    // 10. 合并配置文件并重新加载 Samba 服务
+    if let Err(e) = merge_samba_configs() {
+        return HttpResponse::InternalServerError().json(UpdatePrivateShareResponse {
+            success: false,
+            message: "Failed to merge samba configs".to_string(),
+            error: Some(e),
+        });
+    }
+    let _ = Command::new("systemctl")
+        .args(["restart", "smbd"])
+        .output();
+
+    HttpResponse::Ok().json(UpdatePrivateShareResponse {
+        success: true,
+        message: format!(
+            "Samba private share '{}' updated successfully. Config saved to {}",
+            share_name,
+            private_conf.display()
+        ),
+        error: None,
+    })
 }
 
 // remove_dir_share API - 删除 /etc/samba/conf.d/public.conf 或 private.conf 中的共享配置（需要 share/admin 权限）
