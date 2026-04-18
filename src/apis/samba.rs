@@ -1578,6 +1578,7 @@ pub struct RemoveDirShareRequest {
 pub struct UpdatePublicShareRequest {
     pub share_name: String,
     pub browseable: String,
+    pub read_only: String,
     pub guest_ok: String,
 }
 
@@ -1841,6 +1842,14 @@ pub async fn update_public_share(
         });
     }
 
+    if !valid_values.contains(&share_req.read_only.to_lowercase().as_str()) {
+        return HttpResponse::BadRequest().json(UpdatePublicShareResponse {
+            success: false,
+            message: "Invalid read_only value".to_string(),
+            error: Some("read_only must be 'yes' or 'no'".to_string()),
+        });
+    }
+
     if !valid_values.contains(&share_req.guest_ok.to_lowercase().as_str()) {
         return HttpResponse::BadRequest().json(UpdatePublicShareResponse {
             success: false,
@@ -1885,6 +1894,7 @@ pub async fn update_public_share(
     // 7. 更新 share section 的指定字段
     ini.with_section(Some(share_name.to_string()))
         .set("browseable", &share_req.browseable.to_lowercase())
+        .set("read only", &share_req.read_only.to_lowercase())
         .set("guest ok", &share_req.guest_ok.to_lowercase());
 
     // 8. 写回文件
