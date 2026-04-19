@@ -1444,6 +1444,8 @@ pub async fn list_zfs_shares(
 pub struct DirShareInfo {
     pub name: String,       // 共享名称（section title）
     pub r#type: String,     // 共享类型：public / private
+    pub browseable: String, // yes/no
+    pub read_only: String,  // yes/no
 }
 
 // List Directory Shares 响应结构体
@@ -1475,11 +1477,13 @@ pub async fn list_dir_shares(
     if public_conf.exists() {
         match Ini::load_from_file(&public_conf) {
             Ok(ini) => {
-                for section in ini.sections() {
-                    if let Some(name) = section {
+                for (section_name, properties) in ini.iter() {
+                    if let Some(name) = section_name {
                         shares.push(DirShareInfo {
                             name: name.to_string(),
                             r#type: "public".to_string(),
+                            browseable: properties.get("browseable").unwrap_or("").to_string(),
+                            read_only: properties.get("read only").unwrap_or("").to_string(),
                         });
                     }
                 }
@@ -1500,11 +1504,13 @@ pub async fn list_dir_shares(
     if private_conf.exists() {
         match Ini::load_from_file(&private_conf) {
             Ok(ini) => {
-                for section in ini.sections() {
-                    if let Some(name) = section {
+                for (section_name, properties) in ini.iter() {
+                    if let Some(name) = section_name {
                         shares.push(DirShareInfo {
                             name: name.to_string(),
                             r#type: "private".to_string(),
+                            browseable: properties.get("browseable").unwrap_or("").to_string(),
+                            read_only: properties.get("read only").unwrap_or("").to_string(),
                         });
                     }
                 }
