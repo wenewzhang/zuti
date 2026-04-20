@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -148,8 +149,125 @@ pub struct DeleteImageResponse {
 }
 
 // ============================================================================
+// Search Image Related Structures
+// ============================================================================
+
+/// Search image request
+#[derive(Deserialize)]
+pub struct SearchImageRequest {
+    pub image_name: String,
+}
+
+/// Search result entry
+#[derive(Serialize)]
+pub struct SearchResultEntry {
+    pub name: String,
+    pub stars: String,
+    pub official: String,
+    pub description: String,
+}
+
+/// Search image response
+#[derive(Serialize)]
+pub struct SearchImageResponse {
+    pub success: bool,
+    pub message: String,
+    pub results: Vec<SearchResultEntry>,
+}
+
+// ============================================================================
 // API Endpoints
 // ============================================================================
+
+/// Search Docker Image via podman (Admin Only)
+///
+/// # Endpoint
+/// POST /docker/search
+///
+/// # Request Body
+/// { "image_name": "nginx" }
+///
+/// # Response
+/// { "success": true, "message": "Found N result(s)", "results": [...] }
+#[post("/docker/search")]
+pub async fn search_image(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    body: web::Json<SearchImageRequest>,
+) -> impl Responder {
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let image_name = body.image_name.trim();
+    if image_name.is_empty() {
+        return HttpResponse::BadRequest().json(SearchImageResponse {
+            success: false,
+            message: "Image name is required".to_string(),
+            results: vec![],
+        });
+    }
+
+    let output = match Command::new("podman")
+        .arg("search")
+        .arg("--format")
+        .arg("table {{.Name}}\t{{.Stars}}\t{{.Official}}\t{{.Description}}")
+        .arg(image_name)
+        .output()
+    {
+        Ok(output) => output,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SearchImageResponse {
+                success: false,
+                message: format!("Failed to execute podman search: {}", e),
+                results: vec![],
+            });
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return HttpResponse::InternalServerError().json(SearchImageResponse {
+            success: false,
+            message: format!("podman search failed: {}", stderr),
+            results: vec![],
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut results = Vec::new();
+
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("NAME") {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() >= 4 {
+            results.push(SearchResultEntry {
+                name: parts[0].trim().to_string(),
+                stars: parts[1].trim().to_string(),
+                official: parts[2].trim().to_string(),
+                description: parts[3].trim().to_string(),
+            });
+        } else if parts.len() == 3 {
+            results.push(SearchResultEntry {
+                name: parts[0].trim().to_string(),
+                stars: parts[1].trim().to_string(),
+                official: parts[2].trim().to_string(),
+                description: "".to_string(),
+            });
+        }
+    }
+
+    HttpResponse::Ok().json(SearchImageResponse {
+        success: true,
+        message: format!("Found {} result(s)", results.len()),
+        results,
+    })
+}
 
 /// Get Docker Image List (Admin Only)
 #[get("/docker/get_images")]
