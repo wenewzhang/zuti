@@ -260,6 +260,15 @@ remove directory share
       }'
 ```
 
+Image Search
+```
+  curl -k -X POST https://192.168.3.203:8443/docker/search \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $TOKEN" \
+    -d '{"image_name": "nginx"}'
+   
+```      
+
 Docker list images
 ```
   curl -k -X GET https://192.168.3.203:8443/docker/get_images \

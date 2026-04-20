@@ -212,7 +212,7 @@ pub async fn search_image(
     let output = match Command::new("podman")
         .arg("search")
         .arg("--format")
-        .arg("table {{.Name}}\t{{.Stars}}\t{{.Official}}\t{{.Description}}")
+        .arg("json")
         .arg(image_name)
         .output()
     {
@@ -236,31 +236,39 @@ pub async fn search_image(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut results = Vec::new();
 
-    for line in stdout.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with("NAME") {
-            continue;
-        }
-
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() >= 4 {
-            results.push(SearchResultEntry {
-                name: parts[0].trim().to_string(),
-                stars: parts[1].trim().to_string(),
-                official: parts[2].trim().to_string(),
-                description: parts[3].trim().to_string(),
-            });
-        } else if parts.len() == 3 {
-            results.push(SearchResultEntry {
-                name: parts[0].trim().to_string(),
-                stars: parts[1].trim().to_string(),
-                official: parts[2].trim().to_string(),
-                description: "".to_string(),
-            });
-        }
+    #[derive(Deserialize)]
+    struct PodmanSearchItem {
+        #[serde(alias = "Name")]
+        name: String,
+        #[serde(alias = "Stars")]
+        stars: i64,
+        #[serde(alias = "Official")]
+        official: String,
+        #[serde(alias = "Description")]
+        description: String,
     }
+
+    let podman_results: Vec<PodmanSearchItem> = match serde_json::from_str(&stdout) {
+        Ok(r) => r,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SearchImageResponse {
+                success: false,
+                message: format!("Failed to parse podman search output: {}", e),
+                results: vec![],
+            });
+        }
+    };
+
+    let results: Vec<SearchResultEntry> = podman_results
+        .into_iter()
+        .map(|r| SearchResultEntry {
+            name: r.name,
+            stars: r.stars.to_string(),
+            official: r.official,
+            description: r.description,
+        })
+        .collect();
 
     HttpResponse::Ok().json(SearchImageResponse {
         success: true,
