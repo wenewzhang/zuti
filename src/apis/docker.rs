@@ -131,6 +131,8 @@ where
 pub struct DockerImage {
     pub id: String,
     pub repo_tags: Vec<String>,
+    pub created: i64,
+    pub size: i64,
 }
 
 #[derive(Serialize)]
@@ -308,6 +310,8 @@ pub async fn get_images(req: HttpRequest, pool: web::Data<DbPool>) -> impl Respo
                 .map(|img| DockerImage {
                     id: format_short_id(&img.id),
                     repo_tags: img.repo_tags,
+                    created: img.created,
+                    size: img.size,
                 })
                 .collect();
 
