@@ -2088,3 +2088,252 @@ pub async fn delete_volume(
         volumes: Some(config.volumes),
     })
 }
+
+// ============================================================================
+// Container Lifecycle Operations
+// ============================================================================
+
+/// Container operation request
+#[derive(Deserialize, Debug)]
+pub struct ContainerOperationRequest {
+    pub container_id: String,
+}
+
+/// Container operation response
+#[derive(Serialize)]
+pub struct ContainerOperationResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+/// Start a container by ID or name
+///
+/// # Endpoint
+/// POST /docker/start
+///
+/// # Request Body
+/// { "container_id": "abc123..." }
+#[post("/docker/start")]
+pub async fn docker_start_container(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    body: web::Json<ContainerOperationRequest>,
+) -> impl Responder {
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let container_id = body.container_id.trim();
+    if container_id.is_empty() {
+        return HttpResponse::BadRequest().json(ContainerOperationResponse {
+            success: false,
+            message: "Container ID or name is required".to_string(),
+        });
+    }
+
+    let docker = match Docker::connect_with_local_defaults() {
+        Ok(d) => d,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ContainerOperationResponse {
+                success: false,
+                message: format!("Failed to connect to Docker: {}", e),
+            });
+        }
+    };
+
+    match docker.start_container(container_id, None).await {
+        Ok(_) => HttpResponse::Ok().json(ContainerOperationResponse {
+            success: true,
+            message: format!("Container '{}' started successfully", container_id),
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(ContainerOperationResponse {
+            success: false,
+            message: format!("Failed to start container: {}", e),
+        }),
+    }
+}
+
+/// Stop container request
+#[derive(Deserialize, Debug)]
+pub struct StopContainerRequest {
+    pub container_id: String,
+    #[serde(default = "default_docker_stop_timeout")]
+    pub timeout: i32,
+}
+
+fn default_docker_stop_timeout() -> i32 {
+    10
+}
+
+/// Stop a container by ID or name
+///
+/// # Endpoint
+/// POST /docker/stop
+///
+/// # Request Body
+/// { "container_id": "abc123...", "timeout": 10 }
+#[post("/docker/stop")]
+pub async fn docker_stop_container(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    body: web::Json<StopContainerRequest>,
+) -> impl Responder {
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let container_id = body.container_id.trim();
+    if container_id.is_empty() {
+        return HttpResponse::BadRequest().json(ContainerOperationResponse {
+            success: false,
+            message: "Container ID or name is required".to_string(),
+        });
+    }
+
+    let docker = match Docker::connect_with_local_defaults() {
+        Ok(d) => d,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ContainerOperationResponse {
+                success: false,
+                message: format!("Failed to connect to Docker: {}", e),
+            });
+        }
+    };
+
+    let options = bollard::query_parameters::StopContainerOptions {
+        t: Some(body.timeout),
+        ..Default::default()
+    };
+
+    match docker.stop_container(container_id, Some(options)).await {
+        Ok(_) => HttpResponse::Ok().json(ContainerOperationResponse {
+            success: true,
+            message: format!("Container '{}' stopped successfully", container_id),
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(ContainerOperationResponse {
+            success: false,
+            message: format!("Failed to stop container: {}", e),
+        }),
+    }
+}
+
+/// Restart container request
+#[derive(Deserialize, Debug)]
+pub struct RestartContainerRequest {
+    pub container_id: String,
+    #[serde(default = "default_docker_restart_timeout")]
+    pub timeout: i32,
+}
+
+fn default_docker_restart_timeout() -> i32 {
+    10
+}
+
+/// Restart a container by ID or name
+///
+/// # Endpoint
+/// POST /docker/restart
+///
+/// # Request Body
+/// { "container_id": "abc123...", "timeout": 10 }
+#[post("/docker/restart")]
+pub async fn docker_restart_container(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    body: web::Json<RestartContainerRequest>,
+) -> impl Responder {
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let container_id = body.container_id.trim();
+    if container_id.is_empty() {
+        return HttpResponse::BadRequest().json(ContainerOperationResponse {
+            success: false,
+            message: "Container ID or name is required".to_string(),
+        });
+    }
+
+    let docker = match Docker::connect_with_local_defaults() {
+        Ok(d) => d,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ContainerOperationResponse {
+                success: false,
+                message: format!("Failed to connect to Docker: {}", e),
+            });
+        }
+    };
+
+    let options = bollard::query_parameters::RestartContainerOptions {
+        t: Some(body.timeout),
+        ..Default::default()
+    };
+
+    match docker.restart_container(container_id, Some(options)).await {
+        Ok(_) => HttpResponse::Ok().json(ContainerOperationResponse {
+            success: true,
+            message: format!("Container '{}' restarted successfully", container_id),
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(ContainerOperationResponse {
+            success: false,
+            message: format!("Failed to restart container: {}", e),
+        }),
+    }
+}
+
+/// Remove a container by ID or name
+///
+/// # Endpoint
+/// POST /docker/remove
+///
+/// # Request Body
+/// { "container_id": "abc123..." }
+#[post("/docker/remove")]
+pub async fn docker_remove_container(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    body: web::Json<ContainerOperationRequest>,
+) -> impl Responder {
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let container_id = body.container_id.trim();
+    if container_id.is_empty() {
+        return HttpResponse::BadRequest().json(ContainerOperationResponse {
+            success: false,
+            message: "Container ID or name is required".to_string(),
+        });
+    }
+
+    let docker = match Docker::connect_with_local_defaults() {
+        Ok(d) => d,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ContainerOperationResponse {
+                success: false,
+                message: format!("Failed to connect to Docker: {}", e),
+            });
+        }
+    };
+
+    let options = bollard::query_parameters::RemoveContainerOptions {
+        force: true,
+        v: true,
+        ..Default::default()
+    };
+
+    match docker.remove_container(container_id, Some(options)).await {
+        Ok(_) => HttpResponse::Ok().json(ContainerOperationResponse {
+            success: true,
+            message: format!("Container '{}' removed successfully", container_id),
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(ContainerOperationResponse {
+            success: false,
+            message: format!("Failed to remove container: {}", e),
+        }),
+    }
+}
