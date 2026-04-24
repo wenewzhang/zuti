@@ -2,7 +2,7 @@ use actix_web::{get, post, HttpRequest, HttpResponse, Responder, web};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
-use crate::utils::admin::{validate_token_with_db, verify_admin_access};
+use crate::utils::admin::{validate_token_with_db, verify_admin_access, verify_share_access};
 use crate::utils::consts::FORBID_DIRECTORY;
 use crate::disk::zfs_utils::DatasetDetail;
 
@@ -2261,7 +2261,7 @@ pub async fn update_zfs_share(
     body: web::Json<UpdateZfsShareRequest>,
 ) -> impl Responder {
     // 1. 验证 JWT token 并检查 admin 权限
-    let _admin_username = match verify_admin_access(&req, &pool).await {
+    let _admin_username = match verify_share_access(&req, &pool).await {
         Ok(username) => username,
         Err(response) => return response,
     };    
@@ -2471,7 +2471,7 @@ pub async fn close_zfs_share(
     pool: web::Data<crate::DbPool>,
     body: web::Json<CloseZfsShareRequest>,
 ) -> impl Responder {
-    let _admin_username = match verify_admin_access(&req, &pool).await {
+    let _admin_username = match verify_share_access(&req, &pool).await {
         Ok(username) => username,
         Err(response) => return response,
     };

@@ -2199,10 +2199,7 @@ pub struct RemoveZfsShareResponse {
     pub error: Option<String>,
 }
 
-// remove_zfs_share API - 卸载 ZFS dataset 并关闭 SMB 共享（需要 share/admin 权限）
-// 执行步骤：
-// 1. zfs umount <dataset>
-// 2. zfs set sharesmb=off <dataset>
+// todo: remove this,zfs/close_zfs_share instead of
 #[post("/smb/remove_zfs_share")]
 pub async fn remove_zfs_share(
     req: HttpRequest,
