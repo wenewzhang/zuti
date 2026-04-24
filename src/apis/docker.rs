@@ -1207,59 +1207,22 @@ pub async fn set_registry(
         }
     }
 
-    // 5. Read existing registries (primary only)
-    let existing_content = match read_registry_config() {
-        Ok(content) => content,
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(RegistryResponse {
-                success: false,
-                message: e,
-                registries: None,
-            })
-        }
+    // 5. Build new config with only the current registry entry
+    let registry = RegistryMirrorEntry {
+        prefix: prefix.to_string(),
+        location: location.to_string(),
+        insecure: req_body.insecure,
     };
+    let registries = vec![registry.clone()];
 
-    // 6. Parse primary registries only (no mirrors)
-    let groups = parse_mirror_groups(&existing_content);
-    let mut registries: Vec<RegistryMirrorEntry> = groups.iter().map(|g| RegistryMirrorEntry {
-        prefix: g.prefix.clone(),
-        location: g.primary.location.clone(),
-        insecure: g.primary.insecure,
-    }).collect();
-
-    // 7. Check if this prefix already exists
-    let existing_index = registries.iter().position(|r| r.prefix == prefix);
-
-    if let Some(index) = existing_index {
-        // Update existing entry
-        registries[index].location = location.to_string();
-        registries[index].insecure = req_body.insecure;
-    } else {
-        // Add new entry
-        registries.push(RegistryMirrorEntry {
-            prefix: prefix.to_string(),
-            location: location.to_string(),
-            insecure: req_body.insecure,
-        });
-    }
-
-    // 8. Rebuild full config with existing mirrors preserved
-    let mut new_groups: Vec<MirrorGroup> = registries.iter().map(|r| {
-        // Try to find existing mirrors for this prefix
-        let existing_mirrors = groups.iter()
-            .find(|g| g.prefix == r.prefix)
-            .map(|g| g.mirrors.clone())
-            .unwrap_or_default();
-        
-        MirrorGroup {
-            prefix: r.prefix.clone(),
-            primary: MirrorEntry {
-                location: r.location.clone(),
-                insecure: r.insecure,
-            },
-            mirrors: existing_mirrors,
-        }
-    }).collect();
+    let new_groups = vec![MirrorGroup {
+        prefix: registry.prefix.clone(),
+        primary: MirrorEntry {
+            location: registry.location.clone(),
+            insecure: registry.insecure,
+        },
+        mirrors: vec![],
+    }];
 
     // 9. Write to file
     let new_content = generate_config_from_groups(&new_groups);
@@ -1476,7 +1439,7 @@ struct TomlRegistry {
     location: String,
     #[serde(default)]
     insecure: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     mirror: Vec<TomlMirror>,
 }
 

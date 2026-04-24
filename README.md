@@ -350,10 +350,14 @@ create container
 
 Mirror
 ```
+export HOST=https://192.168.3.203:8443
+
   curl -k -X POST "${HOST}/docker/setting/mirror" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    -d '{"location":"mirror.baidubce.com"}'
+    -d '{"location":"mirror.baidubce.com",
+        "insecure": true
+    }'
 
   curl -k -X POST "${HOST}/docker/setting/mirror" \
     -H "Authorization: Bearer ${TOKEN}" \
