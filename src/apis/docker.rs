@@ -1425,6 +1425,13 @@ pub struct MirrorListResponse {
     pub groups: Option<Vec<MirrorGroup>>,
 }
 
+/// Add mirror response
+#[derive(Serialize)]
+pub struct AddMirrorResponse {
+    pub success: bool,
+    pub message: String,
+}
+
 /// TOML config structures for serde
 #[derive(Debug, Deserialize, Serialize)]
 struct TomlMirror {
@@ -1545,10 +1552,9 @@ pub async fn add_registry_mirror(
     let location = req_body.location.trim();
 
     if location.is_empty() {
-        return HttpResponse::BadRequest().json(MirrorListResponse {
+        return HttpResponse::BadRequest().json(AddMirrorResponse {
             success: false,
             message: "Mirror location is required".to_string(),
-            groups: None,
         });
     }
 
@@ -1568,10 +1574,9 @@ pub async fn add_registry_mirror(
             // Check if mirror already exists in any registry
             for group in &groups {
                 if group.mirrors.iter().any(|m| m.location == location) {
-                    return HttpResponse::BadRequest().json(MirrorListResponse {
+                    return HttpResponse::BadRequest().json(AddMirrorResponse {
                         success: false,
                         message: format!("Mirror '{}' already exists", location),
-                        groups: Some(groups),
                     });
                 }
             }
@@ -1584,36 +1589,32 @@ pub async fn add_registry_mirror(
             prefix
         }
         None => {
-            return HttpResponse::BadRequest().json(MirrorListResponse {
+            return HttpResponse::BadRequest().json(AddMirrorResponse {
                 success: false,
                 message: "No primary registry found. Please create it first using /docker/setting/registry".to_string(),
-                groups: Some(groups),
             });
         }
     };
 
     // 5. Backup and write config
     if let Err(e) = fs::copy(REGISTRY_CONF_PATH, REGISTRY_CONF_BACKUP_PATH) {
-        return HttpResponse::InternalServerError().json(MirrorListResponse {
+        return HttpResponse::InternalServerError().json(AddMirrorResponse {
             success: false,
             message: format!("Failed to backup config: {}", e),
-            groups: None,
         });
     }
 
     let new_content = generate_config_from_groups(&groups);
     if let Err(e) = fs::write(REGISTRY_CONF_PATH, new_content) {
-        return HttpResponse::InternalServerError().json(MirrorListResponse {
+        return HttpResponse::InternalServerError().json(AddMirrorResponse {
             success: false,
             message: format!("Failed to write config: {}", e),
-            groups: None,
         });
     }
 
-    HttpResponse::Ok().json(MirrorListResponse {
+    HttpResponse::Ok().json(AddMirrorResponse {
         success: true,
         message: format!("Mirror '{}' added to prefix '{}'", location, prefix),
-        groups: Some(groups),
     })
 }
 
@@ -1642,13 +1643,21 @@ pub async fn list_registry_mirrors(
         }
     };
 
-    if content.is_empty() {
-        return HttpResponse::Ok().json(Vec::<MirrorGroup>::new());
-    }
+    let mirrors: Vec<MirrorEntry> = if content.is_empty() {
+        Vec::new()
+    } else {
+        let groups = parse_mirror_groups(&content);
+        // Only list registry mirrors (exclude primary registries)
+        groups
+            .into_iter()
+            .flat_map(|g| g.mirrors)
+            .collect()
+    };
 
-    let groups = parse_mirror_groups(&content);
-
-    HttpResponse::Ok().json(groups)
+    HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "mirrors": mirrors,
+    }))
 }
 
 /// Delete a mirror from registry by location (searches all registries)
