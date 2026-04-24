@@ -12,7 +12,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::utils::admin::verify_admin_access;
+use crate::utils::admin::{verify_admin_access, validate_token_with_db};
 use crate::utils::consts::{FORBID_DIRECTORY, ZUTI_SETTING_FILE};
 use crate::DbPool;
 
@@ -197,11 +197,10 @@ pub async fn search_image(
     pool: web::Data<DbPool>,
     body: web::Json<SearchImageRequest>,
 ) -> impl Responder {
-    let _admin_username = match verify_admin_access(&req, &pool).await {
-        Ok(username) => username,
-        Err(response) => return response,
-    };
-
+    // 1. Verify admin access
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
     let image_name = body.image_name.trim();
     if image_name.is_empty() {
         return HttpResponse::BadRequest().json(SearchImageResponse {
@@ -282,10 +281,10 @@ pub async fn search_image(
 /// Get Docker Image List (Admin Only)
 #[get("/docker/get_images")]
 pub async fn get_images(req: HttpRequest, pool: web::Data<DbPool>) -> impl Responder {
-    let _admin_username = match verify_admin_access(&req, &pool).await {
-        Ok(username) => username,
-        Err(response) => return response,
-    };
+    // 1. Verify admin access
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
 
     let docker = match Docker::connect_with_local_defaults() {
         Ok(docker) => docker,
@@ -1300,10 +1299,9 @@ pub async fn get_registries(
     pool: web::Data<DbPool>,
 ) -> impl Responder {
     // 1. Verify admin access
-    let _admin_username = match verify_admin_access(&req, &pool).await {
-        Ok(username) => username,
-        Err(response) => return response,
-    };
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
 
     // 2. Read config
     let content = match read_registry_config() {
@@ -1666,10 +1664,9 @@ pub async fn list_registry_mirrors(
     pool: web::Data<DbPool>,
 ) -> impl Responder {
     // 1. Verify admin access
-    let _admin_username = match verify_admin_access(&req, &pool).await {
-        Ok(username) => username,
-        Err(response) => return response,
-    };
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
 
     // 2. Read config
     let content = match read_registry_config() {

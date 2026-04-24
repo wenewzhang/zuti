@@ -302,7 +302,7 @@ create container
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
-      "image": "docker.io/library/nginx:trixie-perl",
+      "image": "docker.io/library/nginx:latest",
       "name": "my-nginx",
       "env": {"NGINX_HOST": "example.com"},
       "ports": [
