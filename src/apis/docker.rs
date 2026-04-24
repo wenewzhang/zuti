@@ -267,7 +267,7 @@ pub async fn search_image(
             name: r.name,
             stars: r.stars.to_string(),
             official: r.official,
-            description: r.description,
+            description: r.description.chars().take(500).collect(),
         })
         .collect();
 
