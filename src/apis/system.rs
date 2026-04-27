@@ -171,14 +171,36 @@ pub async fn get_recommended_apps() -> impl Responder {
         }
     };
 
-    let content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(RecommendedAppsResponse {
-                success: false,
-                data: None,
-                error: Some(format!("Failed to read recommended apps file '{}': {}", path, e)),
-            });
+    let content = if path.starts_with("http://") || path.starts_with("https://") {
+        match reqwest::get(&path).await {
+            Ok(resp) => match resp.text().await {
+                Ok(text) => text,
+                Err(e) => {
+                    return HttpResponse::InternalServerError().json(RecommendedAppsResponse {
+                        success: false,
+                        data: None,
+                        error: Some(format!("Failed to read response body from '{}': {}", path, e)),
+                    });
+                }
+            },
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(RecommendedAppsResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!("Failed to fetch recommended apps from '{}': {}", path, e)),
+                });
+            }
+        }
+    } else {
+        match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(RecommendedAppsResponse {
+                    success: false,
+                    data: None,
+                    error: Some(format!("Failed to read recommended apps file '{}': {}", path, e)),
+                });
+            }
         }
     };
 
