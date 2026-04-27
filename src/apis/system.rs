@@ -2,7 +2,7 @@ use actix_web::{get, post, HttpRequest, HttpResponse, Responder, web};
 use lazy_static::lazy_static;
 use serde::Serialize;
 use std::process::Command;
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::utils::admin::verify_admin_access;
@@ -205,7 +205,7 @@ pub async fn get_recommended_apps(
         .as_secs();
 
     {
-        let cache = RECOMMENDED_APPS_CACHE.lock().unwrap();
+        let cache = RECOMMENDED_APPS_CACHE.lock().await;
         if let (Some(data), Some(cached_at), Some(cached_path)) =
             (cache.data.as_ref(), cache.cached_at, cache.path.as_ref())
         {
@@ -217,6 +217,7 @@ pub async fn get_recommended_apps(
                 });
             }
         }
+        drop(cache);
     }
 
     let content = if path.starts_with("http://") || path.starts_with("https://") {
@@ -264,7 +265,7 @@ pub async fn get_recommended_apps(
     };
 
     {
-        let mut cache = RECOMMENDED_APPS_CACHE.lock().unwrap();
+        let mut cache = RECOMMENDED_APPS_CACHE.lock().await;
         cache.data = Some(json_data.clone());
         cache.cached_at = Some(now);
         cache.path = Some(path.clone());

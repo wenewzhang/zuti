@@ -43,6 +43,7 @@ rand = "0.8"
 toml = "0.8"
 serde_yaml = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["sync"] }
 
 [dev-dependencies]
 tempfile = "3"
