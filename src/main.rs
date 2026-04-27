@@ -60,6 +60,26 @@ async fn main() -> std::io::Result<()> {
             }
         }
     }
+
+    // 检查 podman.socket 状态
+    match std::process::Command::new("systemctl")
+        .args(["is-active", "podman.socket"])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            println!("podman.socket is active");
+            log::info!("podman.socket is active");
+        }
+        Ok(output) => {
+            let status = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            eprintln!("\x1b[31mWarning: podman.socket is not active (status: {})\x1b[0m", status);
+            log::warn!("podman.socket is not active (status: {})", status);
+        }
+        Err(e) => {
+            eprintln!("\x1b[31mWarning: failed to check podman.socket status: {}\x1b[0m", e);
+            log::warn!("Failed to check podman.socket status: {}", e);
+        }
+    }
     
     let env_path = Path::new("/etc/zuti/.env");
     if env_path.exists() {
