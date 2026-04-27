@@ -1,8 +1,27 @@
 use actix_web::{get, post, HttpRequest, HttpResponse, Responder, web};
+use lazy_static::lazy_static;
 use serde::Serialize;
 use std::process::Command;
+use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::utils::admin::verify_admin_access;
+
+const RECOMMENDED_APPS_CACHE_TTL_SECONDS: u64 = 3600;
+
+struct RecommendedAppsCache {
+    data: Option<serde_json::Value>,
+    cached_at: Option<u64>,
+    path: Option<String>,
+}
+
+lazy_static! {
+    static ref RECOMMENDED_APPS_CACHE: Mutex<RecommendedAppsCache> = Mutex::new(RecommendedAppsCache {
+        data: None,
+        cached_at: None,
+        path: None,
+    });
+}
 
 // reboot 响应结构体
 #[derive(Serialize)]
@@ -180,6 +199,26 @@ pub async fn get_recommended_apps(
         }
     };
 
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    {
+        let cache = RECOMMENDED_APPS_CACHE.lock().unwrap();
+        if let (Some(data), Some(cached_at), Some(cached_path)) =
+            (cache.data.as_ref(), cache.cached_at, cache.path.as_ref())
+        {
+            if cached_path == &path && now.saturating_sub(cached_at) < RECOMMENDED_APPS_CACHE_TTL_SECONDS {
+                return HttpResponse::Ok().json(RecommendedAppsResponse {
+                    success: true,
+                    data: Some(data.clone()),
+                    error: None,
+                });
+            }
+        }
+    }
+
     let content = if path.starts_with("http://") || path.starts_with("https://") {
         match reqwest::get(&path).await {
             Ok(resp) => match resp.text().await {
@@ -223,6 +262,13 @@ pub async fn get_recommended_apps(
             });
         }
     };
+
+    {
+        let mut cache = RECOMMENDED_APPS_CACHE.lock().unwrap();
+        cache.data = Some(json_data.clone());
+        cache.cached_at = Some(now);
+        cache.path = Some(path.clone());
+    }
 
     HttpResponse::Ok().json(RecommendedAppsResponse {
         success: true,
