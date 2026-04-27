@@ -268,6 +268,7 @@ async fn main() -> std::io::Result<()> {
             .service(apis::system::reboot_system)
             .service(apis::system::reboot_system_force)
             .service(apis::system::shutdown_system)
+            .service(apis::system::get_recommended_apps)
             .service(apis::zfs::get_pool_advanced_setting)
             .service(apis::zfs::set_pool_advanced_setting)
             .service(apis::zfs::get_pool_devices_handler)

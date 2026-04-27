@@ -1,4 +1,4 @@
-use actix_web::{post, HttpRequest, HttpResponse, Responder, web};
+use actix_web::{get, post, HttpRequest, HttpResponse, Responder, web};
 use serde::Serialize;
 use std::process::Command;
 
@@ -147,4 +147,55 @@ pub async fn shutdown_system(
             error: Some(stderr.to_string()),
         })
     }
+}
+
+// recommended_apps 响应结构体
+#[derive(Serialize)]
+pub struct RecommendedAppsResponse {
+    pub success: bool,
+    pub data: Option<serde_json::Value>,
+    pub error: Option<String>,
+}
+
+/// system/recommended_apps API - 获取推荐应用列表（无需认证）
+#[get("/system/recommended_apps")]
+pub async fn get_recommended_apps() -> impl Responder {
+    let path = match std::env::var("RECOMMENDED_APPS") {
+        Ok(p) => p,
+        Err(_) => {
+            return HttpResponse::Ok().json(RecommendedAppsResponse {
+                success: true,
+                data: Some(serde_json::Value::Array(vec![])),
+                error: None,
+            });
+        }
+    };
+
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(RecommendedAppsResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to read recommended apps file '{}': {}", path, e)),
+            });
+        }
+    };
+
+    let json_data: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(RecommendedAppsResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to parse recommended apps JSON: {}", e)),
+            });
+        }
+    };
+
+    HttpResponse::Ok().json(RecommendedAppsResponse {
+        success: true,
+        data: Some(json_data),
+        error: None,
+    })
 }
