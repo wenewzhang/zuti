@@ -157,9 +157,18 @@ pub struct RecommendedAppsResponse {
     pub error: Option<String>,
 }
 
-/// system/recommended_apps API - 获取推荐应用列表（无需认证）
+/// system/recommended_apps API - 获取推荐应用列表（需要 JWT 认证）
 #[get("/system/recommended_apps")]
-pub async fn get_recommended_apps() -> impl Responder {
+pub async fn get_recommended_apps(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
     let path = match std::env::var("RECOMMENDED_APPS") {
         Ok(p) => p,
         Err(_) => {
