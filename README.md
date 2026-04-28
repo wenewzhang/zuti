@@ -408,7 +408,7 @@ export  HOST="https://192.168.3.203:8443"
 
 Podman compose
 ```
-  curl -k -X POST https://192.168.3.203:8443/docker/compose_up \
+  curl -k -X POST https://192.168.3.203:8443/hub/compose_up \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{"content":"services:\n  db:\n    image: postgres:15\n    environment:\n      POSTGRES_PASSWORD: secret\n    volumes:\n      - db_data:/var/lib/postgresql/data\n  web:\n    image: my
@@ -417,11 +417,11 @@ Podman compose
 
 
 
-  curl -k https://192.168.3.203:8443/docker/compose_list \
+  curl -k https://192.168.3.203:8443/hub/compose_list \
     -H "Authorization: Bearer $TOKEN"
 
 
-  curl -k -X DELETE https://192.168.3.203:8443/docker/compose_down \
+  curl -k -X DELETE https://192.168.3.203:8443/hub/compose_down \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
@@ -430,7 +430,7 @@ Podman compose
 
   删除项目及卷
 
-  curl -k -X DELETE https://192.168.3.203:8443/docker/compose_down \
+  curl -k -X DELETE https://192.168.3.203:8443/hub/compose_down \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
@@ -440,7 +440,7 @@ Podman compose
 
   删除项目、卷和镜像
 
-  curl -k -X DELETE https://192.168.3.203:8443/docker/compose_down \
+  curl -k -X DELETE https://192.168.3.203:8443/hub/compose_down \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{
@@ -449,7 +449,7 @@ Podman compose
       "remove_images": true
     }'
 
-  curl -k -X DELETE "https://192.168.3.203:8443/docker/compose/delete/myapp" \
+  curl -k -X DELETE "https://192.168.3.203:8443/hub/compose/delete/myapp" \
     -H "Authorization: Bearer ${TOKEN}"
 
 
@@ -458,23 +458,23 @@ Podman compose
 pod
 ```
   # 列出 pods
-  curl -k "https://192.168.3.203:8443/podman/pod/list" \
+  curl -k "https://192.168.3.203:8443/hub/pod/list" \
     -H "Authorization: Bearer ${TOKEN}"
 
   # 启动 pod
-  curl -k -X POST "https://192.168.3.203:8443/podman/pod/start/my-pod" \
+  curl -k -X POST "https://192.168.3.203:8443/hub/pod/start/my-pod" \
     -H "Authorization: Bearer ${TOKEN}"
 
   # 停止 pod
-  curl -k -X POST "https://192.168.3.203:8443/podman/pod/stop/my-pod" \
+  curl -k -X POST "https://192.168.3.203:8443/hub/pod/stop/my-pod" \
     -H "Authorization: Bearer ${TOKEN}"
 
   # 重启 pod
-  curl -k -X POST "https://192.168.3.203:8443/podman/pod/restart/my-pod" \
+  curl -k -X POST "https://192.168.3.203:8443/hub/pod/restart/my-pod" \
     -H "Authorization: Bearer ${TOKEN}"
 
   # 删除 pod (强制)
-  curl -k -X DELETE "https://192.168.3.203:8443/podman/pod/remove/my-pod" \
+  curl -k -X DELETE "https://192.168.3.203:8443/hub/pod/remove/my-pod" \
     -H "Authorization: Bearer ${TOKEN}"
 
 ```

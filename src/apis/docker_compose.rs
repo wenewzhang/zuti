@@ -180,7 +180,7 @@ fn execute_compose_up(
     }
 }
 
-#[post("/docker/compose_up")]
+#[post("/hub/compose_up")]
 pub async fn compose_up(
     req: HttpRequest,
     pool: web::Data<DbPool>,
@@ -266,7 +266,7 @@ pub struct ComposeListResponse {
 /// List all compose projects
 ///
 /// # Endpoint
-/// GET /docker/compose_list
+/// GET /hub/compose_list
 ///
 /// # Response
 /// ```json
@@ -279,7 +279,7 @@ pub struct ComposeListResponse {
 ///     ]
 /// }
 /// ```
-#[get("/docker/compose_list")]
+#[get("/hub/compose_list")]
 pub async fn compose_list(
     req: HttpRequest,
     pool: web::Data<DbPool>,
@@ -422,7 +422,7 @@ fn execute_compose_down(
 /// Delete compose project files (YAML only, not stopping containers)
 ///
 /// # Endpoint
-/// DELETE /docker/compose/delete
+/// DELETE /hub/compose/delete
 ///
 /// # Path Parameters
 /// - `project_name`: Project name to delete
@@ -431,7 +431,7 @@ fn execute_compose_down(
 /// ```json
 /// { "success": true, "message": "Project files deleted" }
 /// ```
-#[delete("/docker/compose/delete/{project_name}")]
+#[delete("/hub/compose/delete/{project_name}")]
 pub async fn compose_delete(
     req: HttpRequest,
     pool: web::Data<DbPool>,
@@ -478,10 +478,10 @@ pub async fn compose_delete(
 }
 
 
-/// Stop and remove Docker/Podman Compose project
+/// Stop and remove Docker/hub Compose project
 ///
 /// # Endpoint
-/// DELETE /docker/compose_down
+/// DELETE /hub/compose_down
 ///
 /// # Request Body
 /// ```json
@@ -491,7 +491,7 @@ pub async fn compose_delete(
 ///     "remove_images": false
 /// }
 /// ```
-#[delete("/docker/compose_down")]
+#[delete("/hub/compose_down")]
 pub async fn compose_down(
     req: HttpRequest,
     pool: web::Data<DbPool>,
@@ -634,7 +634,7 @@ fn parse_pod_ps_json(output: &str) -> Vec<PodInfo> {
 /// List all pods
 ///
 /// # Endpoint
-/// GET /podman/pod/list
+/// GET /hub/pod/list
 ///
 /// # Response
 /// ```json
@@ -646,7 +646,7 @@ fn parse_pod_ps_json(output: &str) -> Vec<PodInfo> {
 ///     ]
 /// }
 /// ```
-#[get("/podman/pod/list")]
+#[get("/hub/pod/list")]
 pub async fn pod_list(
     req: HttpRequest,
     pool: web::Data<DbPool>,
@@ -720,13 +720,13 @@ pub async fn pod_list(
 /// Start a pod
 ///
 /// # Endpoint
-/// POST /podman/pod/start/{name_or_id}
+/// POST /hub/pod/start/{name_or_id}
 ///
 /// # Response
 /// ```json
 /// { "success": true, "message": "Pod 'my-pod' started successfully" }
 /// ```
-#[post("/podman/pod/start/{name_or_id}")]
+#[post("/hub/pod/start/{name_or_id}")]
 pub async fn pod_start(
     req: HttpRequest,
     pool: web::Data<DbPool>,
@@ -781,13 +781,13 @@ pub async fn pod_start(
 /// Stop a pod
 ///
 /// # Endpoint
-/// POST /podman/pod/stop/{name_or_id}
+/// POST /hub/pod/stop/{name_or_id}
 ///
 /// # Response
 /// ```json
 /// { "success": true, "message": "Pod 'my-pod' stopped successfully" }
 /// ```
-#[post("/podman/pod/stop/{name_or_id}")]
+#[post("/hub/pod/stop/{name_or_id}")]
 pub async fn pod_stop(
     req: HttpRequest,
     pool: web::Data<DbPool>,
@@ -842,13 +842,13 @@ pub async fn pod_stop(
 /// Restart a pod
 ///
 /// # Endpoint
-/// POST /podman/pod/restart/{name_or_id}
+/// POST /hub/pod/restart/{name_or_id}
 ///
 /// # Response
 /// ```json
 /// { "success": true, "message": "Pod 'my-pod' restarted successfully" }
 /// ```
-#[post("/podman/pod/restart/{name_or_id}")]
+#[post("/hub/pod/restart/{name_or_id}")]
 pub async fn pod_restart(
     req: HttpRequest,
     pool: web::Data<DbPool>,
@@ -903,13 +903,13 @@ pub async fn pod_restart(
 /// Remove a pod
 ///
 /// # Endpoint
-/// DELETE /podman/pod/remove/{name_or_id}
+/// DELETE /hub/pod/remove/{name_or_id}
 ///
 /// # Response
 /// ```json
 /// { "success": true, "message": "Pod 'my-pod' removed successfully" }
 /// ```
-#[delete("/podman/pod/remove/{name_or_id}")]
+#[delete("/hub/pod/remove/{name_or_id}")]
 pub async fn pod_remove(
     req: HttpRequest,
     pool: web::Data<DbPool>,
