@@ -408,12 +408,15 @@ export  HOST="https://192.168.3.203:8443"
 
 Podman compose
 ```
-  curl -k -X POST https://192.168.3.203:8443/hub/compose_up \
+curl -k -X POST https://192.168.3.203:8443/hub/compose_up \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"content":"services:\n  db:\n    image: postgres:15\n    environment:\n      POSTGRES_PASSWORD: secret\n    volumes:\n      - db_data:/var/lib/postgresql/data\n  web:\n    image: my
-  app:latest\n    ports:\n      - \"3000:3000\"\n    depends_on:\n      - db\nvolumes:\n  db_data:","project_name":"myapp","detached":true,"build":false}'
-
+    -d '{
+  "content": "services:\n  db:\n    image: public.ecr.aws/docker/library/postgres:17rc1\n    environment:\n      POSTGRES_PASSWORD: secret\n    volumes:\n      - db_data:/var/lib/postgresql/data\n  web:\n    image: myapp:latest\n    ports:\n      - \"3000:3000\"\n    depends_on:\n      - db\nvolumes:\n  db_data:",
+  "project_name": "myapp",
+  "detached": true,
+  "build": false
+}'
 
 
 

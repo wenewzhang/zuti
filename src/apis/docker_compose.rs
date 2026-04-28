@@ -613,7 +613,8 @@ fn parse_pod_ps_json(output: &str) -> Vec<PodInfo> {
                     .unwrap_or_default()
                     .to_string();
                 
-                let created = item.get("CreatedAt")
+                let created = item.get("Created")
+                    .or_else(|| item.get("CreatedAt"))
                     .and_then(|v| v.as_str())
                     .unwrap_or_default()
                     .to_string();
