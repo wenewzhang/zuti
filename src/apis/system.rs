@@ -220,40 +220,29 @@ pub async fn get_recommended_apps(
         drop(cache);
     }
 
-    let content = if path.starts_with("http://") || path.starts_with("https://") {
-        match reqwest::get(&path).await {
-            Ok(resp) => match resp.text().await {
-                Ok(text) => text,
-                Err(e) => {
-                    return HttpResponse::InternalServerError().json(RecommendedAppsResponse {
-                        success: false,
-                        data: None,
-                        error: Some(format!("Failed to read response body from '{}': {}", path, e)),
-                    });
-                }
-            },
-            Err(e) => {
-                return HttpResponse::InternalServerError().json(RecommendedAppsResponse {
-                    success: false,
-                    data: None,
-                    error: Some(format!("Failed to fetch recommended apps from '{}': {}", path, e)),
-                });
-            }
+// 4. 获取数据（增加超时控制）
+    let content = if path.starts_with("http") {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10)) // 增加超时
+            .build()
+            .unwrap();
+
+        match client.get(&path).send().await {
+            Ok(resp) => resp.text().await.map_err(|e| e.to_string()),
+            Err(e) => Err(e.to_string()),
         }
     } else {
-        match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                return HttpResponse::InternalServerError().json(RecommendedAppsResponse {
-                    success: false,
-                    data: None,
-                    error: Some(format!("Failed to read recommended apps file '{}': {}", path, e)),
-                });
-            }
-        }
+        std::fs::read_to_string(&path).map_err(|e| e.to_string())
     };
 
-    let json_data: serde_json::Value = match serde_json::from_str(&content) {
+    let content_text = match content {
+        Ok(t) => t,
+        Err(e) => return HttpResponse::InternalServerError().json(RecommendedAppsResponse {
+            success: false, data: None, error: Some(e) 
+        }),
+    };
+
+    let json_data: serde_json::Value = match serde_json::from_str(&content_text) {
         Ok(v) => v,
         Err(e) => {
             return HttpResponse::InternalServerError().json(RecommendedAppsResponse {
