@@ -544,3 +544,72 @@ pub async fn restart_service(
         })
     }
 }
+
+// service_autostart 请求结构体
+#[derive(Deserialize)]
+pub struct ServiceAutostartRequest {
+    pub service_name: String,
+    pub enable: bool,
+}
+
+// service_autostart 响应结构体
+#[derive(Serialize)]
+pub struct ServiceAutostartResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// system/service_autostart API - 设置服务开机自启（需要 JWT 认证）
+#[post("/system/service_autostart")]
+pub async fn service_autostart(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    body: web::Json<ServiceAutostartRequest>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let service_name = body.service_name.trim();
+    if service_name.is_empty() {
+        return HttpResponse::BadRequest().json(ServiceAutostartResponse {
+            success: false,
+            message: "Service name cannot be empty".to_string(),
+            error: Some("service_name is required".to_string()),
+        });
+    }
+
+    // 2. 执行 systemctl enable/disable <service_name> 命令
+    let action = if body.enable { "enable" } else { "disable" };
+    let output = match Command::new("systemctl")
+        .args([action, service_name])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ServiceAutostartResponse {
+                success: false,
+                message: format!("Failed to execute systemctl {} command", action),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    if output.status.success() {
+        HttpResponse::Ok().json(ServiceAutostartResponse {
+            success: true,
+            message: format!("Service '{}' {}d successfully", service_name, action),
+            error: None,
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        HttpResponse::InternalServerError().json(ServiceAutostartResponse {
+            success: false,
+            message: format!("Failed to {} service '{}'", action, service_name),
+            error: Some(stderr.to_string()),
+        })
+    }
+}

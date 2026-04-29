@@ -273,6 +273,7 @@ async fn main() -> std::io::Result<()> {
             .service(apis::system::start_service)
             .service(apis::system::stop_service)
             .service(apis::system::restart_service)
+            .service(apis::system::service_autostart)
             .service(apis::zfs::get_pool_advanced_setting)
             .service(apis::zfs::set_pool_advanced_setting)
             .service(apis::zfs::get_pool_devices_handler)
