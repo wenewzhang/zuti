@@ -1,6 +1,6 @@
 use actix_web::{get, post, HttpRequest, HttpResponse, Responder, web};
 use lazy_static::lazy_static;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::process::Command;
 use tokio::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -342,4 +342,205 @@ pub async fn get_recommended_apps(
         data: Some(json_data),
         error: None,
     })
+}
+
+// service_start 请求结构体
+#[derive(Deserialize)]
+pub struct ServiceStartRequest {
+    pub service_name: String,
+}
+
+// service_start 响应结构体
+#[derive(Serialize)]
+pub struct ServiceStartResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// system/service_start API - 启动指定服务（需要 JWT 认证）
+#[post("/system/service_start")]
+pub async fn start_service(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    body: web::Json<ServiceStartRequest>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let service_name = body.service_name.trim();
+    if service_name.is_empty() {
+        return HttpResponse::BadRequest().json(ServiceStartResponse {
+            success: false,
+            message: "Service name cannot be empty".to_string(),
+            error: Some("service_name is required".to_string()),
+        });
+    }
+
+    // 2. 执行 systemctl start <service_name> 命令
+    let output = match Command::new("systemctl")
+        .args(["start", service_name])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ServiceStartResponse {
+                success: false,
+                message: "Failed to execute systemctl start command".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    if output.status.success() {
+        HttpResponse::Ok().json(ServiceStartResponse {
+            success: true,
+            message: format!("Service '{}' started successfully", service_name),
+            error: None,
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        HttpResponse::InternalServerError().json(ServiceStartResponse {
+            success: false,
+            message: format!("Failed to start service '{}'", service_name),
+            error: Some(stderr.to_string()),
+        })
+    }
+}
+
+// service_stop 请求结构体
+#[derive(Deserialize)]
+pub struct ServiceStopRequest {
+    pub service_name: String,
+}
+
+// service_stop 响应结构体
+#[derive(Serialize)]
+pub struct ServiceStopResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// system/service_stop API - 停止指定服务（需要 JWT 认证）
+#[post("/system/service_stop")]
+pub async fn stop_service(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    body: web::Json<ServiceStopRequest>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let service_name = body.service_name.trim();
+    if service_name.is_empty() {
+        return HttpResponse::BadRequest().json(ServiceStopResponse {
+            success: false,
+            message: "Service name cannot be empty".to_string(),
+            error: Some("service_name is required".to_string()),
+        });
+    }
+
+    // 2. 执行 systemctl stop <service_name> 命令
+    let output = match Command::new("systemctl")
+        .args(["stop", service_name])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ServiceStopResponse {
+                success: false,
+                message: "Failed to execute systemctl stop command".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    if output.status.success() {
+        HttpResponse::Ok().json(ServiceStopResponse {
+            success: true,
+            message: format!("Service '{}' stopped successfully", service_name),
+            error: None,
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        HttpResponse::InternalServerError().json(ServiceStopResponse {
+            success: false,
+            message: format!("Failed to stop service '{}'", service_name),
+            error: Some(stderr.to_string()),
+        })
+    }
+}
+
+// service_restart 请求结构体
+#[derive(Deserialize)]
+pub struct ServiceRestartRequest {
+    pub service_name: String,
+}
+
+// service_restart 响应结构体
+#[derive(Serialize)]
+pub struct ServiceRestartResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// system/service_restart API - 重启指定服务（需要 JWT 认证）
+#[post("/system/service_restart")]
+pub async fn restart_service(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    body: web::Json<ServiceRestartRequest>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let service_name = body.service_name.trim();
+    if service_name.is_empty() {
+        return HttpResponse::BadRequest().json(ServiceRestartResponse {
+            success: false,
+            message: "Service name cannot be empty".to_string(),
+            error: Some("service_name is required".to_string()),
+        });
+    }
+
+    // 2. 执行 systemctl restart <service_name> 命令
+    let output = match Command::new("systemctl")
+        .args(["restart", service_name])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ServiceRestartResponse {
+                success: false,
+                message: "Failed to execute systemctl restart command".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    if output.status.success() {
+        HttpResponse::Ok().json(ServiceRestartResponse {
+            success: true,
+            message: format!("Service '{}' restarted successfully", service_name),
+            error: None,
+        })
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        HttpResponse::InternalServerError().json(ServiceRestartResponse {
+            success: false,
+            message: format!("Failed to restart service '{}'", service_name),
+            error: Some(stderr.to_string()),
+        })
+    }
 }
