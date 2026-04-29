@@ -176,6 +176,83 @@ pub struct RecommendedAppsResponse {
     pub error: Option<String>,
 }
 
+// services_status 响应结构体
+#[derive(Serialize)]
+pub struct ServiceStatus {
+    pub name: String,
+    pub enabled: String,
+    pub active: String,
+}
+
+#[derive(Serialize)]
+pub struct ServicesStatusResponse {
+    pub success: bool,
+    pub data: Vec<ServiceStatus>,
+    pub error: Option<String>,
+}
+
+/// system/services_status API - 获取服务状态（需要 JWT 认证）
+#[get("/system/services_status")]
+pub async fn get_services_status(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    let services = vec!["ttyd.service", "ssh.service"];
+    let mut result = Vec::with_capacity(services.len());
+
+    for svc in services {
+        let enabled = match Command::new("systemctl")
+            .args(["is-enabled", svc])
+            .output()
+        {
+            Ok(output) => {
+                let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if output.status.success() {
+                    text
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    if !stderr.is_empty() { stderr } else { text }
+                }
+            }
+            Err(e) => format!("error: {}", e),
+        };
+
+        let active = match Command::new("systemctl")
+            .args(["is-active", svc])
+            .output()
+        {
+            Ok(output) => {
+                let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if output.status.success() {
+                    text
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    if !stderr.is_empty() { stderr } else { text }
+                }
+            }
+            Err(e) => format!("error: {}", e),
+        };
+
+        result.push(ServiceStatus {
+            name: svc.to_string(),
+            enabled,
+            active,
+        });
+    }
+
+    HttpResponse::Ok().json(ServicesStatusResponse {
+        success: true,
+        data: result,
+        error: None,
+    })
+}
+
 /// system/recommended_apps API - 获取推荐应用列表（需要 JWT 认证）
 #[get("/system/recommended_apps")]
 pub async fn get_recommended_apps(
