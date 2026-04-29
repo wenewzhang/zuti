@@ -613,3 +613,203 @@ pub async fn service_autostart(
         })
     }
 }
+
+const SSHD_CONFIG_PATH: &str = "/etc/ssh/sshd_config";
+
+// ssh_setting 响应结构体
+#[derive(Serialize)]
+pub struct SshSettingResponse {
+    pub success: bool,
+    pub data: Option<SshSettingData>,
+    pub error: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct SshSettingData {
+    pub permit_root_login: String,
+    pub password_authentication: String,
+}
+
+fn read_sshd_setting(key: &str) -> Option<String> {
+    let content = std::fs::read_to_string(SSHD_CONFIG_PATH).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        let mut parts = trimmed.split_whitespace();
+        if let Some(k) = parts.next() {
+            if k.eq_ignore_ascii_case(key) {
+                if let Some(v) = parts.next() {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// system/ssh_setting API - 获取 SSH 配置（需要 JWT 认证）
+#[get("/system/ssh_setting")]
+pub async fn get_ssh_setting(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    let permit_root_login = read_sshd_setting("PermitRootLogin").unwrap_or_default();
+    let password_authentication = read_sshd_setting("PasswordAuthentication").unwrap_or_default();
+
+    HttpResponse::Ok().json(SshSettingResponse {
+        success: true,
+        data: Some(SshSettingData {
+            permit_root_login,
+            password_authentication,
+        }),
+        error: None,
+    })
+}
+
+// ssh_setting 请求结构体
+#[derive(Deserialize)]
+pub struct SshSettingRequest {
+    pub permit_root_login: String,
+    pub password_authentication: String,
+}
+
+// ssh_setting 设置响应结构体
+#[derive(Serialize)]
+pub struct SshSettingUpdateResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+fn write_sshd_setting(key: &str, value: &str) -> Result<(), String> {
+    let content = std::fs::read_to_string(SSHD_CONFIG_PATH)
+        .map_err(|e| format!("Failed to read sshd_config: {}", e))?;
+
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let mut found = false;
+
+    for line in &mut lines {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            let after_hash = trimmed[1..].trim();
+            let mut parts = after_hash.split_whitespace();
+            if let Some(k) = parts.next() {
+                if k.eq_ignore_ascii_case(key) {
+                    *line = format!("{} {}", key, value);
+                    found = true;
+                    break;
+                }
+            }
+            continue;
+        }
+        let mut parts = trimmed.split_whitespace();
+        if let Some(k) = parts.next() {
+            if k.eq_ignore_ascii_case(key) {
+                *line = format!("{} {}", key, value);
+                found = true;
+                break;
+            }
+        }
+    }
+
+    if !found {
+        lines.push(format!("{} {}", key, value));
+    }
+
+    std::fs::write(SSHD_CONFIG_PATH, lines.join("\n") + "\n")
+        .map_err(|e| format!("Failed to write sshd_config: {}", e))?;
+
+    Ok(())
+}
+
+/// system/ssh_setting API - 设置 SSH 配置（需要 JWT 认证，仅管理员可用）
+#[post("/system/ssh_setting")]
+pub async fn set_ssh_setting(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    body: web::Json<SshSettingRequest>,
+) -> impl Responder {
+    let _username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let valid_permit_root_login = ["yes", "no", "prohibit-password"];
+    let permit_root_login = body.permit_root_login.trim();
+    if !valid_permit_root_login.contains(&permit_root_login) {
+        return HttpResponse::BadRequest().json(SshSettingUpdateResponse {
+            success: false,
+            message: "Invalid permit_root_login value".to_string(),
+            error: Some(format!(
+                "permit_root_login must be one of: {}",
+                valid_permit_root_login.join(", ")
+            )),
+        });
+    }
+
+    let valid_password_auth = ["yes", "no"];
+    let password_authentication = body.password_authentication.trim();
+    if !valid_password_auth.contains(&password_authentication) {
+        return HttpResponse::BadRequest().json(SshSettingUpdateResponse {
+            success: false,
+            message: "Invalid password_authentication value".to_string(),
+            error: Some(format!(
+                "password_authentication must be one of: {}",
+                valid_password_auth.join(", ")
+            )),
+        });
+    }
+
+    if let Err(e) = write_sshd_setting("PermitRootLogin", permit_root_login) {
+        return HttpResponse::InternalServerError().json(SshSettingUpdateResponse {
+            success: false,
+            message: "Failed to update PermitRootLogin".to_string(),
+            error: Some(e),
+        });
+    }
+
+    if let Err(e) = write_sshd_setting("PasswordAuthentication", password_authentication) {
+        return HttpResponse::InternalServerError().json(SshSettingUpdateResponse {
+            success: false,
+            message: "Failed to update PasswordAuthentication".to_string(),
+            error: Some(e),
+        });
+    }
+
+    // 重启 ssh 服务使配置生效
+    let output = match Command::new("systemctl")
+        .args(["restart", "ssh.service"])
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SshSettingUpdateResponse {
+                success: false,
+                message: "Failed to restart ssh service".to_string(),
+                error: Some(format!("Command error: {}", e)),
+            });
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return HttpResponse::InternalServerError().json(SshSettingUpdateResponse {
+            success: false,
+            message: "Failed to restart ssh service".to_string(),
+            error: Some(stderr.to_string()),
+        });
+    }
+
+    HttpResponse::Ok().json(SshSettingUpdateResponse {
+        success: true,
+        message: "SSH setting updated and service restarted".to_string(),
+        error: None,
+    })
+}

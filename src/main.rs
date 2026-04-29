@@ -274,6 +274,8 @@ async fn main() -> std::io::Result<()> {
             .service(apis::system::stop_service)
             .service(apis::system::restart_service)
             .service(apis::system::service_autostart)
+            .service(apis::system::get_ssh_setting)
+            .service(apis::system::set_ssh_setting)
             .service(apis::zfs::get_pool_advanced_setting)
             .service(apis::zfs::set_pool_advanced_setting)
             .service(apis::zfs::get_pool_devices_handler)
