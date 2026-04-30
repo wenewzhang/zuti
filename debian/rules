@@ -6,7 +6,7 @@ export DH_VERBOSE = 1
 	dh $@
 
 override_dh_auto_build:
-	cargo build --release
+	 [ -f "$$HOME/.cargo/env" ] && . "$$HOME/.cargo/env"; cargo build --release
 	# Create db.sqlite by applying all up migrations in order
 	find migrations -name 'up.sql' | sort | while read f; do sqlite3 db.sqlite < "$$f"; done
 
@@ -18,6 +18,6 @@ override_dh_auto_install:
 	install -D -m 644 .env.example debian/zuti/etc/zuti/.env.example
 
 override_dh_auto_clean:
-	cargo clean
+	 [ -f "$$HOME/.cargo/env" ] && . "$$HOME/.cargo/env"; cargo clean
 	rm -f db.sqlite
 	dh_auto_clean
