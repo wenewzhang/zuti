@@ -6,6 +6,7 @@ Build-Depends: debhelper-compat (= 13),
                libssl-dev,
                libpam0g-dev,
                sqlite3,
+               libsqlite3-dev,
                libclang-dev,
                llvm-dev,
                openssl
