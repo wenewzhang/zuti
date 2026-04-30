@@ -3,8 +3,6 @@ Section: admin
 Priority: optional
 Maintainer: Wenew Zhang <wenewboy@gmail.com>
 Build-Depends: debhelper-compat (= 13),
-               cargo,
-               rustc,
                libssl-dev,
                libpam0g-dev,
                sqlite3,
