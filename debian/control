@@ -1,0 +1,24 @@
+Source: zuti
+Section: admin
+Priority: optional
+Maintainer: Wenew Zhang <wenewboy@gmail.com>
+Build-Depends: debhelper-compat (= 13),
+               cargo,
+               rustc,
+               libssl-dev,
+               libpam0g-dev,
+               sqlite3,
+               openssl
+Standards-Version: 4.6.0
+
+Package: zuti
+Architecture: any
+Depends: ${shlibs:Depends},
+         ${misc:Depends},
+         libc6,
+         libssl3 | libssl1.1,
+         libpam0g,
+         openssl,
+         sqlite3
+Description: Zuti Storage Management Service
+ Zuti - Storage management web service for OneNAS SCALE.

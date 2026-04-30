@@ -1,0 +1,23 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --release
+	# Create db.sqlite by applying all up migrations in order
+	find migrations -name 'up.sql' | sort | while read f; do sqlite3 db.sqlite < "$$f"; done
+
+override_dh_auto_install:
+	install -D -m 755 target/release/zuti debian/zuti/usr/bin/zuti
+	install -d -m 755 debian/zuti/usr/share/zuti/migrations
+	cp -a migrations/* debian/zuti/usr/share/zuti/migrations/
+	install -D -m 644 db.sqlite debian/zuti/usr/share/zuti/db/db.sqlite
+	install -D -m 644 .env.example debian/zuti/etc/zuti/.env.example
+
+override_dh_auto_clean:
+	cargo clean
+	rm -f db.sqlite
+	dh_auto_clean

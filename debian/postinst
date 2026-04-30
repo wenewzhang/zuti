@@ -1,0 +1,48 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Create required directories
+        mkdir -p /etc/zuti/certs /var/lib/zuti /var/log/zuti /.data/zuti
+
+        # Copy db.sqlite to /.data/zuti/ if not exists
+        if [ ! -f "/.data/zuti/db.sqlite" ]; then
+            if [ -f "/usr/share/zuti/db/db.sqlite" ]; then
+                cp /usr/share/zuti/db/db.sqlite /.data/zuti/db.sqlite
+                chmod 640 /.data/zuti/db.sqlite
+                chown root:root /.data/zuti/db.sqlite
+            fi
+        fi
+
+        # Copy .env.example to /etc/zuti/.env if not exists
+        if [ ! -f "/etc/zuti/.env" ]; then
+            if [ -f "/etc/zuti/.env.example" ]; then
+                cp /etc/zuti/.env.example /etc/zuti/.env
+                chmod 640 /etc/zuti/.env
+                chown root:root /etc/zuti/.env
+            fi
+        fi
+
+        # Generate SSL certificates if not exists
+        if [ ! -f "/etc/zuti/certs/server.crt" ] || [ ! -f "/etc/zuti/certs/server.key" ]; then
+            openssl genrsa -out /etc/zuti/certs/server.key 2048 2>/dev/null
+            openssl req -new -x509 -key /etc/zuti/certs/server.key -out /etc/zuti/certs/server.crt -days 3650 \
+                -subj "/C=CN/ST=State/L=City/O=Zuti/CN=localhost" 2>/dev/null
+            chmod 600 /etc/zuti/certs/server.key
+            chmod 644 /etc/zuti/certs/server.crt
+            chown root:root /etc/zuti/certs/server.key /etc/zuti/certs/server.crt
+        fi
+
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0
