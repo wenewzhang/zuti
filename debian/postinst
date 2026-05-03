@@ -21,17 +21,21 @@ case "$1" in
                 cp /etc/zuti/.env.example /etc/zuti/.env
                 chmod 640 /etc/zuti/.env
                 chown root:root /etc/zuti/.env
+
+                # Generate JWT_SECRET and replace placeholder
+                JWT_SECRET=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 64)
+                sed -i "s/your_secret_key_change_in_production/${JWT_SECRET}/g" /etc/zuti/.env
             fi
         fi
 
         # Generate SSL certificates if not exists
-        if [ ! -f "/etc/zuti/certs/server.crt" ] || [ ! -f "/etc/zuti/certs/server.key" ]; then
-            openssl genrsa -out /etc/zuti/certs/server.key 2048 2>/dev/null
-            openssl req -new -x509 -key /etc/zuti/certs/server.key -out /etc/zuti/certs/server.crt -days 3650 \
+        if [ ! -f "/etc/zuti/certs/cert.pem" ] || [ ! -f "/etc/zuti/certs/key.pem" ]; then
+            openssl genrsa -out /etc/zuti/certs/key.pem 2048 2>/dev/null
+            openssl req -new -x509 -key /etc/zuti/certs/key.pem -out /etc/zuti/certs/cert.pem -days 3650 \
                 -subj "/C=CN/ST=State/L=City/O=Zuti/CN=localhost" 2>/dev/null
-            chmod 600 /etc/zuti/certs/server.key
-            chmod 644 /etc/zuti/certs/server.crt
-            chown root:root /etc/zuti/certs/server.key /etc/zuti/certs/server.crt
+            chmod 600 /etc/zuti/certs/key.pem
+            chmod 644 /etc/zuti/certs/cert.pem
+            chown root:root /etc/zuti/certs/key.pem /etc/zuti/certs/cert.pem
         fi
 
         ;;
