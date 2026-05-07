@@ -80,6 +80,22 @@ async fn main() -> std::io::Result<()> {
             log::warn!("Failed to check podman.socket status: {}", e);
         }
     }
+
+    // 检查 /etc/containers/registries.conf.zuti 是否存在，如果存在则替换 registries.conf
+    let zuti_registries = Path::new("/etc/containers/registries.conf.zuti");
+    if zuti_registries.exists() {
+        let registries = Path::new("/etc/containers/registries.conf");
+        if registries.exists() {
+            if let Err(e) = fs::remove_file(registries) {
+                log::warn!("Failed to remove /etc/containers/registries.conf: {}", e);
+            }
+        }
+        if let Err(e) = fs::rename(zuti_registries, registries) {
+            log::warn!("Failed to rename /etc/containers/registries.conf.zuti to /etc/containers/registries.conf: {}", e);
+        } else {
+            log::info!("Replaced /etc/containers/registries.conf with .zuti version");
+        }
+    }
     
     let env_path = Path::new("/etc/zuti/.env");
     if env_path.exists() {
