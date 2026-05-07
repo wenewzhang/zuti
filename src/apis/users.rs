@@ -83,7 +83,7 @@ pub async fn create_admin_user(pool: web::Data<DbPool>, new_user: web::Json<NewU
         });
     }
 
-    let pool = pool.get_ref().clone();
+    let db_pool = pool.get_ref().clone();
     let user_data = new_user.into_inner();
     
     // 提前克隆需要的值用于系统用户创建
@@ -91,7 +91,7 @@ pub async fn create_admin_user(pool: web::Data<DbPool>, new_user: web::Json<NewU
     let sys_password = user_data.password.clone();
     
     let result: Result<(), (u16, String)> = web::block(move || {
-        let mut conn = pool.get().expect("Couldn't get db connection from pool");
+        let mut conn = db_pool.get().expect("Couldn't get db connection from pool");
         
         // 检查 users 表中是否已有数据，如果有则不再插入
         let user_exists: bool = users
@@ -132,8 +132,14 @@ pub async fn create_admin_user(pool: web::Data<DbPool>, new_user: web::Json<NewU
                     error: None,
                 }),
                 Err(e) => {
-                    // Linux 用户创建失败，但数据库用户已创建
-                    // 可以在这里添加回滚逻辑
+                    // Linux 用户创建失败，回滚删除数据库用户
+                    let rollback_pool = pool.get_ref().clone();
+                    let username_to_delete = sys_username.clone();
+                    let _ = web::block(move || {
+                        let mut conn = rollback_pool.get().expect("Couldn't get db connection from pool");
+                        diesel::delete(users.filter(name.eq(username_to_delete)))
+                            .execute(&mut conn)
+                    }).await;
                     HttpResponse::Created().json(CreateUserResponse {
                         message: "Database user created, but system user creation failed".to_string(),
                         system_user_created: false,
