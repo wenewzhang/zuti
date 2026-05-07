@@ -80,7 +80,7 @@ fn check_user_exists(username: &str) -> bool {
 fn create_linux_user(username: &str, password: &str) -> Result<(), String> {
     // 1. 创建系统用户（普通用户，可登录）
     let output = Command::new("useradd")
-        .args(["-m", "-s", "/bin/bash", username])
+        .args(["-M", "-s", "/usr/sbin/nologin", username])
         .output()
         .map_err(|e| format!("Failed to execute useradd: {}", e))?;
     

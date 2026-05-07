@@ -165,7 +165,7 @@ pub async fn create_admin_user(pool: web::Data<DbPool>, new_user: web::Json<NewU
 pub fn create_system_user(username: &str, user_password: &str) -> Result<(), String> {
     // 1. 创建系统用户（普通用户，不能登录，可以修改为可登录）
     let output = Command::new("useradd")
-        .args(["-m", "-s", "/bin/bash", username])
+        .args(["-M", "-s", "/usr/sbin/nologin", username])
         .output();
     
     match output {
