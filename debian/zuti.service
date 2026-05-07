@@ -19,9 +19,9 @@ SyslogIdentifier=zuti
 
 # Security hardening
 NoNewPrivileges=true
-ProtectHome=true
+ProtectHome=false
 ProtectSystem=strict
-ReadWritePaths=/.data/zuti /var/log/zuti /etc
+ReadWritePaths=/.data/zuti /var/log/zuti /etc /home -/var/lib/containers -/var/lib/samba -/mnt -/nas -/data -/tools -/software -/downloads -/public -/photos -/archives -/movies -/projects -/docker -/music
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
