@@ -21,5 +21,7 @@ Depends: ${shlibs:Depends},
          libpam0g,
          openssl,
          sqlite3
+Replaces: golang-github-containers-image
+Conflicts: golang-github-containers-image
 Description: Zuti Storage Management Service
  Zuti - Storage management web service for OneNAS SCALE.
