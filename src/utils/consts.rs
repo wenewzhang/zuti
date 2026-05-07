@@ -84,3 +84,10 @@ pub const EXTERNAL_COMMANDS: &[&str] = &[
     "chmod",
     "chown",
 ];
+
+// ============================================================================
+// Registry Mirror Management
+// ============================================================================
+
+pub const REGISTRY_CONF_PATH: &str = "/etc/containers/registries.conf";
+pub const REGISTRY_CONF_BACKUP_PATH: &str = "/etc/containers/registries.conf.bak";

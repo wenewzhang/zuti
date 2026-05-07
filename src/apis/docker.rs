@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::utils::admin::{verify_admin_access, validate_token_with_db};
-use crate::utils::consts::{FORBID_DIRECTORY, ZUTI_SETTING_FILE};
+use crate::utils::consts::{FORBID_DIRECTORY, REGISTRY_CONF_BACKUP_PATH, REGISTRY_CONF_PATH, ZUTI_SETTING_FILE};
 use crate::DbPool;
 
 // ============================================================================
@@ -1085,13 +1085,6 @@ pub async fn create_container(
         }),
     }
 }
-
-// ============================================================================
-// Registry Mirror Management
-// ============================================================================
-
-const REGISTRY_CONF_PATH: &str = "/etc/containers/registries.conf";
-const REGISTRY_CONF_BACKUP_PATH: &str = "/etc/containers/registries.conf.bak";
 
 /// Registry mirror configuration entry
 #[derive(Deserialize, Serialize, Debug, Clone)]

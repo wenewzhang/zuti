@@ -16,6 +16,7 @@ override_dh_auto_install:
 	cp -a migrations/* debian/zuti/usr/share/zuti/migrations/
 	install -D -m 644 db.sqlite debian/zuti/usr/share/zuti/db/db.sqlite
 	install -D -m 644 .env.example debian/zuti/etc/zuti/.env.example
+	install -D -m 644 podman/registries.conf debian/zuti/etc/containers/registries.conf
 
 override_dh_auto_clean:
 	 [ -f "$$HOME/.cargo/env" ] && . "$$HOME/.cargo/env"; cargo clean
