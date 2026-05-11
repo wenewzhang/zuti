@@ -91,3 +91,6 @@ pub const EXTERNAL_COMMANDS: &[&str] = &[
 
 pub const REGISTRY_CONF_PATH: &str = "/etc/containers/registries.conf";
 pub const REGISTRY_CONF_BACKUP_PATH: &str = "/etc/containers/registries.conf.bak";
+
+/// zuti-helper Unix Domain Socket 路径
+pub const ZUTI_HELPER_SOCK: &str = "/run/zuti-helper.sock";

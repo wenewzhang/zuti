@@ -1,9 +1,12 @@
 use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
 use std::process::Command;
 
 use crate::disk::{get_free_disks as get_free_disk_list, DiskBasicInfo, get_device_by_id};
 use crate::utils::admin::validate_token_with_db;
+use crate::utils::consts::ZUTI_HELPER_SOCK;
 
 
 // 分区信息结构体
@@ -608,7 +611,7 @@ pub struct CreatePoolRequest {
 }
 
 // create_pool 响应结构体
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct CreatePoolResponse {
     pub success: bool,
     pub message: String,
@@ -694,88 +697,145 @@ pub async fn create_pool(
     }
 
     // 6. 构建 zpool create 命令
-    let mut args: Vec<String> = vec!["create".to_string(), "-f".to_string(), "-o".to_string(), "ashift=12".to_string()];
+    // let mut args: Vec<String> = vec!["create".to_string(), "-f".to_string(), "-o".to_string(), "ashift=12".to_string()];
 
-    match pool_type.as_str() {
-        "single" => {
-            args.push(pool_name.clone());
-            args.extend(device_by_ids);
-        }
-        "strip" => {
-            args.push(pool_name.clone());
-            args.extend(device_by_ids);
-        }        
-        "mirror" => {
-            args.push(pool_name.clone());
-            args.push("mirror".to_string());
-            args.extend(device_by_ids);
-        }
-        "raidz1" => {
-            args.push(pool_name.clone());
-            args.push("raidz1".to_string());
-            args.extend(device_by_ids);
-        }
-        "raidz2" => {
-            args.push(pool_name.clone());
-            args.push("raidz2".to_string());
-            args.extend(device_by_ids);
-        }
-        "raidz3" => {
-            args.push(pool_name.clone());
-            args.push("raidz3".to_string());
-            args.extend(device_by_ids);
-        }
-        "raid10" => {
-            if device_by_ids.len() < 2 || device_by_ids.len() % 2 != 0 {
-                return HttpResponse::BadRequest().json(CreatePoolResponse {
-                    success: false,
-                    message: "RAID10 requires an even number of disks (at least 2)".to_string(),
-                    error: Some("Invalid number of disks for RAID10".to_string()),
-                });
-            }
-            args.push(pool_name.clone());
-            for chunk in device_by_ids.chunks(2) {
-                args.push("mirror".to_string());
-                args.extend(chunk.iter().cloned());
-            }
-        }
-        _ => {
-            return HttpResponse::BadRequest().json(CreatePoolResponse {
-                success: false,
-                message: "Invalid pool type".to_string(),
-                error: Some(format!("Pool type '{}' is not supported", pool_type)),
-            });
-        }
-    }
+    // match pool_type.as_str() {
+    //     "single" => {
+    //         args.push(pool_name.clone());
+    //         args.extend(device_by_ids);
+    //     }
+    //     "strip" => {
+    //         args.push(pool_name.clone());
+    //         args.extend(device_by_ids);
+    //     }        
+    //     "mirror" => {
+    //         args.push(pool_name.clone());
+    //         args.push("mirror".to_string());
+    //         args.extend(device_by_ids);
+    //     }
+    //     "raidz1" => {
+    //         args.push(pool_name.clone());
+    //         args.push("raidz1".to_string());
+    //         args.extend(device_by_ids);
+    //     }
+    //     "raidz2" => {
+    //         args.push(pool_name.clone());
+    //         args.push("raidz2".to_string());
+    //         args.extend(device_by_ids);
+    //     }
+    //     "raidz3" => {
+    //         args.push(pool_name.clone());
+    //         args.push("raidz3".to_string());
+    //         args.extend(device_by_ids);
+    //     }
+    //     "raid10" => {
+    //         if device_by_ids.len() < 2 || device_by_ids.len() % 2 != 0 {
+    //             return HttpResponse::BadRequest().json(CreatePoolResponse {
+    //                 success: false,
+    //                 message: "RAID10 requires an even number of disks (at least 2)".to_string(),
+    //                 error: Some("Invalid number of disks for RAID10".to_string()),
+    //             });
+    //         }
+    //         args.push(pool_name.clone());
+    //         for chunk in device_by_ids.chunks(2) {
+    //             args.push("mirror".to_string());
+    //             args.extend(chunk.iter().cloned());
+    //         }
+    //     }
+    //     _ => {
+    //         return HttpResponse::BadRequest().json(CreatePoolResponse {
+    //             success: false,
+    //             message: "Invalid pool type".to_string(),
+    //             error: Some(format!("Pool type '{}' is not supported", pool_type)),
+    //         });
+    //     }
+    // }
 
-    // 7. 执行 zpool create 命令
-    let output = match Command::new("zpool").args(&args).output() {
-        Ok(result) => result,
+    // 7. 通过 zuti-helper 执行创建池操作
+    // let socket_path = ZUTI_HELPER_SOCK;
+    let mut stream = match UnixStream::connect(ZUTI_HELPER_SOCK) {
+        Ok(s) => s,
         Err(e) => {
             return HttpResponse::InternalServerError().json(CreatePoolResponse {
                 success: false,
-                message: "Failed to execute zpool create command".to_string(),
-                error: Some(format!("Command error: {}", e)),
+                message: "Failed to connect to zuti-helper".to_string(),
+                error: Some(format!("Unix socket error: {}", e)),
             });
         }
     };
 
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
+    let request_json = match serde_json::to_string(&serde_json::json!({
+        "action": "create_pool",
+        "pool_name": pool_name,
+        "pool_type": pool_type,
+        "devices": devices,
+    })) {
+        Ok(j) => j,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(CreatePoolResponse {
+                success: false,
+                message: "Failed to serialize request".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    if let Err(e) = writeln!(stream, "{}", request_json) {
+        return HttpResponse::InternalServerError().json(CreatePoolResponse {
+            success: false,
+            message: "Failed to send request to zuti-helper".to_string(),
+            error: Some(e.to_string()),
+        });
+    }
+
+    let reader = BufReader::new(&stream);
+    let response_line = match reader.lines().next() {
+        Some(Ok(line)) => line,
+        Some(Err(e)) => {
+            return HttpResponse::InternalServerError().json(CreatePoolResponse {
+                success: false,
+                message: "Failed to read response from zuti-helper".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+        None => {
+            return HttpResponse::InternalServerError().json(CreatePoolResponse {
+                success: false,
+                message: "No response from zuti-helper".to_string(),
+                error: None,
+            });
+        }
+    };
+
+    let helper_resp: serde_json::Value = match serde_json::from_str(&response_line) {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(CreatePoolResponse {
+                success: false,
+                message: "Invalid response from zuti-helper".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    let success = helper_resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    if success {
+        if let Some(data) = helper_resp.get("data") {
+            if let Ok(resp) = serde_json::from_value::<CreatePoolResponse>(data.clone()) {
+                return HttpResponse::Ok().json(resp);
+            }
+        }
         HttpResponse::Ok().json(CreatePoolResponse {
             success: true,
-            message: format!(
-                "Successfully created ZFS pool '{}' of type '{}' with {} device(s)",
-                pool_name, pool_type, devices.len()
-            ),
-            error: if stdout.is_empty() { None } else { Some(stdout.to_string()) },
+            message: "Pool created successfully".to_string(),
+            error: None,
         })
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let error = helper_resp.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error from zuti-helper");
         HttpResponse::InternalServerError().json(CreatePoolResponse {
             success: false,
-            message: format!("Failed to create ZFS pool '{}'", pool_name),
-            error: Some(stderr.to_string()),
+            message: "Failed to create ZFS pool".to_string(),
+            error: Some(error.to_string()),
         })
     }
 }
