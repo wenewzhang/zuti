@@ -972,7 +972,7 @@ pub struct ImportPoolRequest {
 }
 
 /// Import Pool 响应结构体
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct ImportPoolResponse {
     pub success: bool,
     pub message: String,
@@ -1068,51 +1068,90 @@ pub async fn   import_pool(
         }
     }
 
-    // 构建 zpool import 命令
-    let import_result = if let Some(ref dir) = import_req.dir {
-        if dir.is_empty() {
-            // dir 为空字符串时，等同于 null
-            Command::new("zpool")
-                .args(["import", poolname])
-                .output()
-        } else {
-            // dir 有值时，使用 -R 选项
-            Command::new("zpool")
-                .args(["import", "-R", dir, poolname])
-                .output()
+    // 通过 zuti-helper 执行导入池操作
+    let mut stream = match UnixStream::connect(ZUTI_HELPER_SOCK) {
+        Ok(s) => s,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ImportPoolResponse {
+                success: false,
+                message: "Failed to connect to zuti-helper".to_string(),
+                error: Some(format!("Unix socket error: {}", e)),
+            });
         }
-    } else {
-        // dir 为 null
-        Command::new("zpool")
-            .args(["import", poolname])
-            .output()
     };
 
-    match import_result {
-        Ok(output) => {
-            if output.status.success() {
+    let request_json = match serde_json::to_string(&serde_json::json!({
+        "action": "import_pool",
+        "pool_name": poolname,
+        "dir": import_req.dir,
+    })) {
+        Ok(j) => j,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ImportPoolResponse {
+                success: false,
+                message: "Failed to serialize request".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
 
-                HttpResponse::Ok().json(ImportPoolResponse {
-                    success: true,
-                    message: format!("Pool '{}' imported successfully", poolname),
-                    error: None,
-                })
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                HttpResponse::InternalServerError().json(ImportPoolResponse {
-                    success: false,
-                    message: format!("Failed to import pool '{}'", poolname),
-                    error: Some(stderr.to_string()),
-                })
+    if let Err(e) = writeln!(stream, "{}", request_json) {
+        return HttpResponse::InternalServerError().json(ImportPoolResponse {
+            success: false,
+            message: "Failed to send request to zuti-helper".to_string(),
+            error: Some(e.to_string()),
+        });
+    }
+
+    let reader = BufReader::new(&stream);
+    let response_line = match reader.lines().next() {
+        Some(Ok(line)) => line,
+        Some(Err(e)) => {
+            return HttpResponse::InternalServerError().json(ImportPoolResponse {
+                success: false,
+                message: "Failed to read response from zuti-helper".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+        None => {
+            return HttpResponse::InternalServerError().json(ImportPoolResponse {
+                success: false,
+                message: "No response from zuti-helper".to_string(),
+                error: None,
+            });
+        }
+    };
+
+    let helper_resp: serde_json::Value = match serde_json::from_str(&response_line) {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ImportPoolResponse {
+                success: false,
+                message: "Invalid response from zuti-helper".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    let success = helper_resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    if success {
+        if let Some(data) = helper_resp.get("data") {
+            if let Ok(resp) = serde_json::from_value::<ImportPoolResponse>(data.clone()) {
+                return HttpResponse::Ok().json(resp);
             }
         }
-        Err(e) => {
-            HttpResponse::InternalServerError().json(ImportPoolResponse {
-                success: false,
-                message: format!("Failed to execute zpool import for '{}'", poolname),
-                error: Some(e.to_string()),
-            })
-        }
+        HttpResponse::Ok().json(ImportPoolResponse {
+            success: true,
+            message: format!("Pool '{}' imported successfully", poolname),
+            error: None,
+        })
+    } else {
+        let error = helper_resp.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error from zuti-helper");
+        HttpResponse::InternalServerError().json(ImportPoolResponse {
+            success: false,
+            message: format!("Failed to import pool '{}'", poolname),
+            error: Some(error.to_string()),
+        })
     }
 }
 
