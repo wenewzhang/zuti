@@ -200,9 +200,9 @@ pub async fn smb_public_share(
 
     // Set directory permissions: remove write for others if read_only is yes, otherwise add
     let chmod_arg = if share_req.read_only.to_lowercase() == "yes" {
-        "o-w"
+        "a-w"
     } else {
-        "o+w"
+        "a+w"
     };
     if let Err(e) = Command::new("chmod").arg(chmod_arg).arg(&share_req.directory).output() {
         return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
