@@ -696,61 +696,6 @@ pub async fn create_pool(
         }
     }
 
-    // 6. 构建 zpool create 命令
-    // let mut args: Vec<String> = vec!["create".to_string(), "-f".to_string(), "-o".to_string(), "ashift=12".to_string()];
-
-    // match pool_type.as_str() {
-    //     "single" => {
-    //         args.push(pool_name.clone());
-    //         args.extend(device_by_ids);
-    //     }
-    //     "strip" => {
-    //         args.push(pool_name.clone());
-    //         args.extend(device_by_ids);
-    //     }        
-    //     "mirror" => {
-    //         args.push(pool_name.clone());
-    //         args.push("mirror".to_string());
-    //         args.extend(device_by_ids);
-    //     }
-    //     "raidz1" => {
-    //         args.push(pool_name.clone());
-    //         args.push("raidz1".to_string());
-    //         args.extend(device_by_ids);
-    //     }
-    //     "raidz2" => {
-    //         args.push(pool_name.clone());
-    //         args.push("raidz2".to_string());
-    //         args.extend(device_by_ids);
-    //     }
-    //     "raidz3" => {
-    //         args.push(pool_name.clone());
-    //         args.push("raidz3".to_string());
-    //         args.extend(device_by_ids);
-    //     }
-    //     "raid10" => {
-    //         if device_by_ids.len() < 2 || device_by_ids.len() % 2 != 0 {
-    //             return HttpResponse::BadRequest().json(CreatePoolResponse {
-    //                 success: false,
-    //                 message: "RAID10 requires an even number of disks (at least 2)".to_string(),
-    //                 error: Some("Invalid number of disks for RAID10".to_string()),
-    //             });
-    //         }
-    //         args.push(pool_name.clone());
-    //         for chunk in device_by_ids.chunks(2) {
-    //             args.push("mirror".to_string());
-    //             args.extend(chunk.iter().cloned());
-    //         }
-    //     }
-    //     _ => {
-    //         return HttpResponse::BadRequest().json(CreatePoolResponse {
-    //             success: false,
-    //             message: "Invalid pool type".to_string(),
-    //             error: Some(format!("Pool type '{}' is not supported", pool_type)),
-    //         });
-    //     }
-    // }
-
     // 7. 通过 zuti-helper 执行创建池操作
     // let socket_path = ZUTI_HELPER_SOCK;
     let mut stream = match UnixStream::connect(ZUTI_HELPER_SOCK) {

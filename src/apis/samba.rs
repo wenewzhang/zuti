@@ -3,11 +3,13 @@ use diesel::prelude::*;
 use ini::Ini;
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::Command;
 use crate::models::User;
 use crate::schema::users as users_schema;
-use crate::utils::consts::{FORBID_DIRECTORY, FORBIDDEN_USERNAME};
+use crate::utils::consts::{FORBID_DIRECTORY, FORBIDDEN_USERNAME, ZUTI_HELPER_SOCK};
 use crate::utils::conf::merge_samba_configs;
 
 /// 检查指定的用户名是否存在于 Samba 用户列表中（通过 pdbedit -L）
@@ -182,35 +184,90 @@ pub async fn smb_public_share(
         }
     }
 
-    // 4. 检查目录是否存在
-    let dir_path = Path::new(&share_req.directory);
-    if !dir_path.exists() {
-        // 尝试创建目录
-        match fs::create_dir_all(&share_req.directory) {
-            Ok(_) => {}
-            Err(e) => {
-                return HttpResponse::BadRequest().json(SmbPublicShareResponse {
-                    success: false,
-                    message: format!("Directory does not exist and cannot be created: {}", share_req.directory),
-                    error: Some(format!("Failed to create directory: {}", e)),
-                });
-            }
-        }
-    }
-
-    // Set directory permissions: remove write for others if read_only is yes, otherwise add
+    // Set directory permissions argument
     let chmod_arg = if share_req.read_only.to_lowercase() == "yes" {
         "a-w"
     } else {
         "a+w"
     };
-    if let Err(e) = Command::new("chmod").arg(chmod_arg).arg(&share_req.directory).output() {
+
+    // 通过 zuti-helper 创建目录并设置所有者和权限
+    let mut stream = match UnixStream::connect(ZUTI_HELPER_SOCK) {
+        Ok(s) => s,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+                success: false,
+                message: "Failed to connect to zuti-helper".to_string(),
+                error: Some(format!("Unix socket error: {}", e)),
+            });
+        }
+    };
+
+    let request_json = match serde_json::to_string(&serde_json::json!({
+        "action": "create_directory",
+        "directory": &share_req.directory,
+        "owner": "root:root",
+        "arg": chmod_arg,
+    })) {
+        Ok(j) => j,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+                success: false,
+                message: "Failed to serialize request".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    if let Err(e) = writeln!(stream, "{}", request_json) {
         return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
             success: false,
-            message: format!("Failed to set directory permissions: {}", share_req.directory),
-            error: Some(format!("{}", e)),
+            message: "Failed to send request to zuti-helper".to_string(),
+            error: Some(e.to_string()),
         });
     }
+
+    let reader = BufReader::new(&stream);
+    let response_line = match reader.lines().next() {
+        Some(Ok(line)) => line,
+        Some(Err(e)) => {
+            return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+                success: false,
+                message: "Failed to read response from zuti-helper".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+        None => {
+            return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+                success: false,
+                message: "No response from zuti-helper".to_string(),
+                error: None,
+            });
+        }
+    };
+
+    let helper_resp: serde_json::Value = match serde_json::from_str(&response_line) {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+                success: false,
+                message: "Invalid response from zuti-helper".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    let success = helper_resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !success {
+        let error = helper_resp.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error from zuti-helper");
+        return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+            success: false,
+            message: "Failed to create or configure directory via zuti-helper".to_string(),
+            error: Some(error.to_string()),
+        });
+    }
+
+    let dir_path = Path::new(&share_req.directory);
 
     // 5. 创建 /etc/samba/conf.d 目录
     let conf_dir = Path::new("/etc/samba/conf.d");
@@ -331,35 +388,90 @@ pub async fn smb_auth_share(
         }
     }
 
-    // 5. 检查目录是否存在
-    let dir_path = Path::new(&share_req.directory);
-    if !dir_path.exists() {
-        // 尝试创建目录
-        match fs::create_dir_all(&share_req.directory) {
-            Ok(_) => {}
-            Err(e) => {
-                return HttpResponse::BadRequest().json(SmbPublicShareResponse {
-                    success: false,
-                    message: format!("Directory does not exist and cannot be created: {}", share_req.directory),
-                    error: Some(format!("Failed to create directory: {}", e)),
-                });
-            }
-        }
-    }
-
-    // Set directory permissions: remove write for others if read_only is yes, otherwise add
+    // Set directory permissions argument
     let chmod_arg = if share_req.read_only.to_lowercase() == "yes" {
         "a+w"
     } else {
         "a+w"
     };
-    if let Err(e) = Command::new("chmod").arg(chmod_arg).arg(&share_req.directory).output() {
+
+    // 通过 zuti-helper 创建目录并设置所有者和权限
+    let mut stream = match UnixStream::connect(ZUTI_HELPER_SOCK) {
+        Ok(s) => s,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+                success: false,
+                message: "Failed to connect to zuti-helper".to_string(),
+                error: Some(format!("Unix socket error: {}", e)),
+            });
+        }
+    };
+
+    let request_json = match serde_json::to_string(&serde_json::json!({
+        "action": "create_directory",
+        "directory": &share_req.directory,
+        "owner": "root:root",
+        "arg": chmod_arg,
+    })) {
+        Ok(j) => j,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+                success: false,
+                message: "Failed to serialize request".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    if let Err(e) = writeln!(stream, "{}", request_json) {
         return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
             success: false,
-            message: format!("Failed to set directory permissions: {}", share_req.directory),
-            error: Some(format!("{}", e)),
+            message: "Failed to send request to zuti-helper".to_string(),
+            error: Some(e.to_string()),
         });
     }
+
+    let reader = BufReader::new(&stream);
+    let response_line = match reader.lines().next() {
+        Some(Ok(line)) => line,
+        Some(Err(e)) => {
+            return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+                success: false,
+                message: "Failed to read response from zuti-helper".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+        None => {
+            return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+                success: false,
+                message: "No response from zuti-helper".to_string(),
+                error: None,
+            });
+        }
+    };
+
+    let helper_resp: serde_json::Value = match serde_json::from_str(&response_line) {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+                success: false,
+                message: "Invalid response from zuti-helper".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    let success = helper_resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !success {
+        let error = helper_resp.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error from zuti-helper");
+        return HttpResponse::InternalServerError().json(SmbPublicShareResponse {
+            success: false,
+            message: "Failed to create or configure directory via zuti-helper".to_string(),
+            error: Some(error.to_string()),
+        });
+    }
+
+    let dir_path = Path::new(&share_req.directory);
 
     let conf_dir = Path::new("/etc/samba/conf.d");
     // 7. 从目录路径提取共享名（取最后的路径组件）
