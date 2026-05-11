@@ -1,9 +1,11 @@
 use actix_web::{get, post, HttpRequest, HttpResponse, Responder, web};
 use serde::{Deserialize, Serialize};
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
 use std::process::Command;
 
 use crate::utils::admin::{validate_token_with_db, verify_admin_access, verify_share_access};
-use crate::utils::consts::FORBID_DIRECTORY;
+use crate::utils::consts::{FORBID_DIRECTORY, ZUTI_HELPER_SOCK};
 use crate::disk::zfs_utils::DatasetDetail;
 
 /// Dataset 信息结构体
@@ -1121,7 +1123,7 @@ pub struct ExportPoolRequest {
 }
 
 /// Export Pool 响应结构体
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct ExportPoolResponse {
     pub success: bool,
     pub message: String,
@@ -1152,34 +1154,89 @@ pub async fn export_pool(
         });
     }
 
-    // 执行 zpool export 命令
-    match Command::new("zpool")
-        .args(["export", poolname])
-        .output()
-    {
-        Ok(output) => {
-            if output.status.success() {
-                HttpResponse::Ok().json(ExportPoolResponse {
-                    success: true,
-                    message: format!("Pool '{}' exported successfully", poolname),
-                    error: None,
-                })
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                HttpResponse::InternalServerError().json(ExportPoolResponse {
-                    success: false,
-                    message: format!("Failed to export pool '{}'", poolname),
-                    error: Some(stderr.to_string()),
-                })
+    // 通过 zuti-helper 执行导出池操作
+    let mut stream = match UnixStream::connect(ZUTI_HELPER_SOCK) {
+        Ok(s) => s,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ExportPoolResponse {
+                success: false,
+                message: "Failed to connect to zuti-helper".to_string(),
+                error: Some(format!("Unix socket error: {}", e)),
+            });
+        }
+    };
+
+    let request_json = match serde_json::to_string(&serde_json::json!({
+        "action": "export_pool",
+        "pool_name": poolname,
+    })) {
+        Ok(j) => j,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ExportPoolResponse {
+                success: false,
+                message: "Failed to serialize request".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    if let Err(e) = writeln!(stream, "{}", request_json) {
+        return HttpResponse::InternalServerError().json(ExportPoolResponse {
+            success: false,
+            message: "Failed to send request to zuti-helper".to_string(),
+            error: Some(e.to_string()),
+        });
+    }
+
+    let reader = BufReader::new(&stream);
+    let response_line = match reader.lines().next() {
+        Some(Ok(line)) => line,
+        Some(Err(e)) => {
+            return HttpResponse::InternalServerError().json(ExportPoolResponse {
+                success: false,
+                message: "Failed to read response from zuti-helper".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+        None => {
+            return HttpResponse::InternalServerError().json(ExportPoolResponse {
+                success: false,
+                message: "No response from zuti-helper".to_string(),
+                error: None,
+            });
+        }
+    };
+
+    let helper_resp: serde_json::Value = match serde_json::from_str(&response_line) {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ExportPoolResponse {
+                success: false,
+                message: "Invalid response from zuti-helper".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    let success = helper_resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    if success {
+        if let Some(data) = helper_resp.get("data") {
+            if let Ok(resp) = serde_json::from_value::<ExportPoolResponse>(data.clone()) {
+                return HttpResponse::Ok().json(resp);
             }
         }
-        Err(e) => {
-            HttpResponse::InternalServerError().json(ExportPoolResponse {
-                success: false,
-                message: format!("Failed to execute zpool export for '{}'", poolname),
-                error: Some(e.to_string()),
-            })
-        }
+        HttpResponse::Ok().json(ExportPoolResponse {
+            success: true,
+            message: format!("Pool '{}' exported successfully", poolname),
+            error: None,
+        })
+    } else {
+        let error = helper_resp.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error from zuti-helper");
+        HttpResponse::InternalServerError().json(ExportPoolResponse {
+            success: false,
+            message: format!("Failed to export pool '{}'", poolname),
+            error: Some(error.to_string()),
+        })
     }
 }
 
