@@ -2009,6 +2009,93 @@ pub async fn update_public_share(
         });
     }
 
+    // 如果 read_only 为 yes，通过 zuti-helper 设置目录权限
+    let chmod_arg = if share_req.read_only.to_lowercase() == "yes" {
+        "a-w"
+    } else {
+        "a+w"
+    };
+
+    if let Some(section) = ini.section(Some(share_name)) {
+        if let Some(dir_path) = section.get("path") {
+            let mut stream = match UnixStream::connect(ZUTI_HELPER_SOCK) {
+                Ok(s) => s,
+                Err(e) => {
+                    return HttpResponse::InternalServerError().json(UpdatePublicShareResponse {
+                        success: false,
+                        message: "Failed to connect to zuti-helper".to_string(),
+                        error: Some(format!("Unix socket error: {}", e)),
+                    });
+                }
+            };
+
+            let request_json = match serde_json::to_string(&serde_json::json!({
+                "action": "create_directory",
+                "directory": dir_path,
+                "owner": "root:root",
+                "arg": chmod_arg,
+            })) {
+                Ok(j) => j,
+                Err(e) => {
+                    return HttpResponse::InternalServerError().json(UpdatePublicShareResponse {
+                        success: false,
+                        message: "Failed to serialize request".to_string(),
+                        error: Some(e.to_string()),
+                    });
+                }
+            };
+
+            if let Err(e) = writeln!(stream, "{}", request_json) {
+                return HttpResponse::InternalServerError().json(UpdatePublicShareResponse {
+                    success: false,
+                    message: "Failed to send request to zuti-helper".to_string(),
+                    error: Some(e.to_string()),
+                });
+            }
+
+            let reader = BufReader::new(&stream);
+            let response_line = match reader.lines().next() {
+                Some(Ok(line)) => line,
+                Some(Err(e)) => {
+                    return HttpResponse::InternalServerError().json(UpdatePublicShareResponse {
+                        success: false,
+                        message: "Failed to read response from zuti-helper".to_string(),
+                        error: Some(e.to_string()),
+                    });
+                }
+                None => {
+                    return HttpResponse::InternalServerError().json(UpdatePublicShareResponse {
+                        success: false,
+                        message: "No response from zuti-helper".to_string(),
+                        error: None,
+                    });
+                }
+            };
+
+            let helper_resp: serde_json::Value = match serde_json::from_str(&response_line) {
+                Ok(v) => v,
+                Err(e) => {
+                    return HttpResponse::InternalServerError().json(UpdatePublicShareResponse {
+                        success: false,
+                        message: "Invalid response from zuti-helper".to_string(),
+                        error: Some(e.to_string()),
+                    });
+                }
+            };
+
+            let success = helper_resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+            if !success {
+                let error = helper_resp.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error from zuti-helper");
+                return HttpResponse::InternalServerError().json(UpdatePublicShareResponse {
+                    success: false,
+                    message: "Failed to configure directory via zuti-helper".to_string(),
+                    error: Some(error.to_string()),
+                });
+            }
+        }
+    }
+    
+
     // 7. 更新 share section 的指定字段
     ini.with_section(Some(share_name.to_string()))
         .set("browseable", &share_req.browseable.to_lowercase())
