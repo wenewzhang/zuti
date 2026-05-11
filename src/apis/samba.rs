@@ -1122,7 +1122,7 @@ pub struct CreateZfsShareRequest {
 }
 
 // Create ZFS Share 响应结构体
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct CreateZfsShareResponse {
     pub success: bool,
     pub message: String,
@@ -1214,186 +1214,96 @@ pub async fn create_zfs_share(
         }
     }
 
-    let dataset = format!("{}/{}", dataset_name, share_name);
-    // mountpoint 自动生成: /pool/share_name
-
-    // Step 0: 检查 dataset 是否已存在
-    let check_output = Command::new("zfs")
-        .args(["list", "-H", "-o", "name", &dataset])
-        .output();
-
-    let dataset_exists = match check_output {
-        Ok(result) => result.status.success(),
-        Err(_) => false,
+    // 通过 zuti-helper 执行创建 ZFS share 操作
+    let mut stream = match UnixStream::connect(ZUTI_HELPER_SOCK) {
+        Ok(s) => s,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                success: false,
+                message: "Failed to connect to zuti-helper".to_string(),
+                error: Some(format!("Unix socket error: {}", e)),
+            });
+        }
     };
 
-    // Step 1: 如果 dataset 不存在则创建，已存在则设置 sharesmb=on
-    if !dataset_exists {
-        // 创建新 dataset
-        let output = Command::new("zfs")
-            .args([
-                "create",
-                "-o", "sharesmb=on",
-                "-o", "compression=lz4",
-                &dataset,
-            ])
-            .output();
+    let request_json = match serde_json::to_string(&serde_json::json!({
+        "action": "create_zfs_share",
+        "share_name": share_name,
+        "dataset_name": dataset_name,
+        "quota": quota,
+        "samba_user": samba_user,
+    })) {
+        Ok(j) => j,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                success: false,
+                message: "Failed to serialize request".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
 
-        match output {
-            Ok(result) => {
-                if !result.status.success() {
-                    let stderr = String::from_utf8_lossy(&result.stderr);
-                    return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
-                        success: false,
-                        message: format!("Failed to create ZFS dataset: {}", dataset),
-                        error: Some(format!("{}", stderr)),
-                    });
-                }
-            }
-            Err(e) => {
-                return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
-                    success: false,
-                    message: format!("Failed to execute zfs create: {}", dataset),
-                    error: Some(format!("{}", e)),
-                });
+    if let Err(e) = writeln!(stream, "{}", request_json) {
+        return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+            success: false,
+            message: "Failed to send request to zuti-helper".to_string(),
+            error: Some(e.to_string()),
+        });
+    }
+
+    let reader = BufReader::new(&stream);
+    let response_line = match reader.lines().next() {
+        Some(Ok(line)) => line,
+        Some(Err(e)) => {
+            return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                success: false,
+                message: "Failed to read response from zuti-helper".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+        None => {
+            return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                success: false,
+                message: "No response from zuti-helper".to_string(),
+                error: None,
+            });
+        }
+    };
+
+    let helper_resp: serde_json::Value = match serde_json::from_str(&response_line) {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+                success: false,
+                message: "Invalid response from zuti-helper".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    let success = helper_resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    if success {
+        if let Some(data) = helper_resp.get("data") {
+            if let Ok(resp) = serde_json::from_value::<CreateZfsShareResponse>(data.clone()) {
+                return HttpResponse::Ok().json(resp);
             }
         }
+        HttpResponse::Ok().json(CreateZfsShareResponse {
+            success: true,
+            message: format!(
+                "ZFS share '{}' created successfully on pool '{}', mounted at '{}' with quota '{}'",
+                share_name, dataset_name, mountpoint, quota
+            ),
+            error: None,
+        })
     } else {
-        // Dataset 已存在，设置 sharesmb=on
-        let output = Command::new("zfs")
-            .args(["set", "sharesmb=on", &dataset])
-            .output();
-
-        match output {
-            Ok(result) => {
-                if !result.status.success() {
-                    let stderr = String::from_utf8_lossy(&result.stderr);
-                    return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
-                        success: false,
-                        message: format!("Failed to set sharesmb=on for dataset: {}", dataset),
-                        error: Some(format!("{}", stderr)),
-                    });
-                }
-            }
-            Err(e) => {
-                return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
-                    success: false,
-                    message: format!("Failed to execute zfs set sharesmb=on: {}", dataset),
-                    error: Some(format!("{}", e)),
-                });
-            }
-        }
+        let error = helper_resp.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error from zuti-helper");
+        HttpResponse::InternalServerError().json(CreateZfsShareResponse {
+            success: false,
+            message: format!("Failed to create ZFS share '{}'", share_name),
+            error: Some(error.to_string()),
+        })
     }
-
-    // Step 2: zfs set quota=<quota> <pool>/<share_name>（quota 为 none 时跳过）
-    if quota.to_lowercase() != "none" {
-        let output = Command::new("zfs")
-            .args([
-                "set",
-                &format!("quota={}", quota),
-                &dataset,
-            ])
-            .output();
-
-        match output {
-            Ok(result) => {
-                if !result.status.success() {
-                    let stderr = String::from_utf8_lossy(&result.stderr);
-                    // 尝试删除已创建的 dataset
-                    let _ = Command::new("zfs").args(["destroy", &dataset]).output();
-                    return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
-                        success: false,
-                        message: format!("Failed to set quota: {}", quota),
-                        error: Some(format!("{}", stderr)),
-                    });
-                }
-            }
-            Err(e) => {
-                // 尝试删除已创建的 dataset
-                let _ = Command::new("zfs").args(["destroy", &dataset]).output();
-                return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
-                    success: false,
-                    message: format!("Failed to execute zfs set quota: {}", quota),
-                    error: Some(format!("{}", e)),
-                });
-            }
-        }
-    }
-
-    // Step 3: zfs set mountpoint=<mountpoint> <pool>/<share_name>
-    let output = Command::new("zfs")
-        .args([
-            "set",
-            &format!("mountpoint={}", &mountpoint),
-            &dataset,
-        ])
-        .output();
-
-    match output {
-        Ok(result) => {
-            if !result.status.success() {
-                let stderr = String::from_utf8_lossy(&result.stderr);
-                // 尝试删除已创建的 dataset
-                let _ = Command::new("zfs").args(["destroy", &dataset]).output();
-                return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
-                    success: false,
-                    message: format!("Failed to set mountpoint: {}", mountpoint),
-                    error: Some(format!("{}", stderr)),
-                });
-            }
-        }
-        Err(e) => {
-            // 尝试删除已创建的 dataset
-            let _ = Command::new("zfs").args(["destroy", &dataset]).output();
-            return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
-                success: false,
-                message: format!("Failed to execute zfs set mountpoint: {}", mountpoint),
-                error: Some(format!("{}", e)),
-            });
-        }
-    }
-
-    // Step 4: chown -R <samba_user>:<samba_user> <mountpoint>
-    let output = Command::new("chown")
-        .args([
-            "-R",
-            &format!("{}:{}", samba_user, samba_user),
-            &mountpoint,
-        ])
-        .output();
-
-    match output {
-        Ok(result) => {
-            if !result.status.success() {
-                let stderr = String::from_utf8_lossy(&result.stderr);
-                // 尝试删除已创建的 dataset
-                let _ = Command::new("zfs").args(["destroy", &dataset]).output();
-                return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
-                    success: false,
-                    message: format!("Failed to set ownership for user: {}", samba_user),
-                    error: Some(format!("{}", stderr)),
-                });
-            }
-        }
-        Err(e) => {
-            // 尝试删除已创建的 dataset
-            let _ = Command::new("zfs").args(["destroy", &dataset]).output();
-            return HttpResponse::InternalServerError().json(CreateZfsShareResponse {
-                success: false,
-                message: format!("Failed to execute chown for user: {}", samba_user),
-                error: Some(format!("{}", e)),
-            });
-        }
-    }
-
-    HttpResponse::Ok().json(CreateZfsShareResponse {
-        success: true,
-        message: format!(
-            "ZFS share '{}' created successfully on pool '{}', mounted at '{}' with quota '{}'",
-            share_name, dataset_name, mountpoint, quota
-        ),
-        error: None,
-    })
 }
 
 // ZFS SMB Share 信息
