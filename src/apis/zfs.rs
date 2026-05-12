@@ -967,8 +967,8 @@ pub async fn offline_pools(req: HttpRequest, pool: web::Data<crate::DbPool>) -> 
 #[derive(Deserialize, Debug)]
 pub struct ImportPoolRequest {
     pub poolname: String,
-    pub dir: Option<String>,
-    pub mount_on_startup: Option<bool>,
+    pub mount_point: Option<String>,
+    pub boot_enabled: Option<bool>,
 }
 
 /// Import Pool 响应结构体
@@ -1010,7 +1010,7 @@ pub async fn   import_pool(
     }
 
     // 如果提供了 dir，验证是否为禁止目录
-    if let Some(ref dir) = import_req.dir {
+    if let Some(ref dir) = import_req.mount_point {
         if !dir.is_empty() {
             for &forbidden in FORBID_DIRECTORY {
                 if dir == forbidden || dir.starts_with(&format!("{}/", forbidden)) || dir == "/" {
@@ -1023,7 +1023,7 @@ pub async fn   import_pool(
             }
         }
     }
-    if let Some(ref dir) = import_req.dir {
+    if let Some(ref dir) = import_req.mount_point {
         if !dir.is_empty() {
             // 设置 mountpoint
             let mountpoint_result = Command::new("zfs")
@@ -1039,8 +1039,8 @@ pub async fn   import_pool(
             }
         }
     }
-    // 如果 mount_on_startup 为 true，设置 mountpoint 和 canmount
-    if import_req.mount_on_startup == Some(true) {
+    // 如果 boot_enabled 为 true，设置 canmount=on
+    if import_req.boot_enabled == Some(true) {
                     // 设置 canmount=on
         let canmount_result = Command::new("zfs")
             .args(["set", "canmount=on", poolname])
@@ -1083,7 +1083,7 @@ pub async fn   import_pool(
     let request_json = match serde_json::to_string(&serde_json::json!({
         "action": "import_pool",
         "pool_name": poolname,
-        "dir": import_req.dir,
+        "mount_point": import_req.mount_point,
     })) {
         Ok(j) => j,
         Err(e) => {

@@ -579,13 +579,13 @@ zpool import
   curl -k -X POST https://192.168.3.203:8443/zfs/import_pool \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"poolname": "mypool", "dir": "/mnt/data", "mount_on_startup": false}'
+    -d '{"poolname": "mypool", "mount_point": "/mnt/data", "boot_enabled": false}'
 
   # 指定 dir，开机挂载
   curl -k -X POST https://192.168.3.203:8443/zfs/import_pool \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"poolname": "mypool", "dir": "/mnt/data", "mount_on_startup": true}'
+    -d '{"poolname": "mypool", "mount_point": "/mnt/data", "boot_enabled": true}'
 ```
 
 export pool
