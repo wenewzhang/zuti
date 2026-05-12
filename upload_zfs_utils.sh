@@ -2,7 +2,7 @@
 
 # SFTP 上传脚本：将指定文件上传到 root@192.168.3.203:/root/zuti/
 
-REMOTE_HOST="root@192.168.3.203"
+REMOTE_HOST="root@192.168.3.100"
 REMOTE_DIR="/root/zuti"
 LOCAL_FILE="$1"
 
