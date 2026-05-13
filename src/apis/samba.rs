@@ -1417,8 +1417,10 @@ pub async fn list_zfs_shares(
                                             "readonly".to_string()
                                         } else if mode & 0o002 != 0 {
                                             "write".to_string()
-                                        } else {
+                                        } else if mode & 0o004 != 0 {
                                             "readonly".to_string()
+                                        } else {
+                                            "none".to_string()
                                         };
 
                                         (owner_name, owner_perm, guest_perm)
