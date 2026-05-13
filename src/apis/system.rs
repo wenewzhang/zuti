@@ -211,9 +211,9 @@ pub async fn get_services_status(
         let (enabled, active) = if svc == "sysconfig" {
             let exists = std::path::Path::new("/etc/systemd/system/getty@tty1.service.d/override.conf").exists();
             if exists {
-                ("true".to_string(), "true".to_string())
+                ("enabled".to_string(), "active".to_string())
             } else {
-                ("false".to_string(), "false".to_string())
+                ("disabled".to_string(), "inactive".to_string())
             }
         } else {
             let enabled = match Command::new("systemctl")
