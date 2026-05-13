@@ -203,40 +203,51 @@ pub async fn get_services_status(
         Err(response) => return response,
     };
 
-    let services = vec!["ttyd.service", "ssh.service"];
+    let services = vec!["ttyd.service", "ssh.service", "sysconfig"];
     let mut result = Vec::with_capacity(services.len());
 
     for svc in services {
-        let enabled = match Command::new("systemctl")
-            .args(["is-enabled", svc])
-            .output()
-        {
-            Ok(output) => {
-                let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if output.status.success() {
-                    text
-                } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                    if !stderr.is_empty() { stderr } else { text }
-                }
+        let (enabled, active) = if svc == "sysconfig" {
+            let exists = std::path::Path::new("/etc/systemd/system/getty@tty1.service.d/override.conf").exists();
+            if exists {
+                ("true".to_string(), "true".to_string())
+            } else {
+                ("false".to_string(), "false".to_string())
             }
-            Err(e) => format!("error: {}", e),
-        };
+        } else {
+            let enabled = match Command::new("systemctl")
+                .args(["is-enabled", svc])
+                .output()
+            {
+                Ok(output) => {
+                    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if output.status.success() {
+                        text
+                    } else {
+                        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                        if !stderr.is_empty() { stderr } else { text }
+                    }
+                }
+                Err(e) => format!("error: {}", e),
+            };
 
-        let active = match Command::new("systemctl")
-            .args(["is-active", svc])
-            .output()
-        {
-            Ok(output) => {
-                let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if output.status.success() {
-                    text
-                } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                    if !stderr.is_empty() { stderr } else { text }
+            let active = match Command::new("systemctl")
+                .args(["is-active", svc])
+                .output()
+            {
+                Ok(output) => {
+                    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if output.status.success() {
+                        text
+                    } else {
+                        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                        if !stderr.is_empty() { stderr } else { text }
+                    }
                 }
-            }
-            Err(e) => format!("error: {}", e),
+                Err(e) => format!("error: {}", e),
+            };
+
+            (enabled, active)
         };
 
         result.push(ServiceStatus {
@@ -660,8 +671,8 @@ pub async fn get_ssh_setting(
         Err(response) => return response,
     };
 
-    let permit_root_login = read_sshd_setting("PermitRootLogin").unwrap_or_default();
-    let password_authentication = read_sshd_setting("PasswordAuthentication").unwrap_or_default();
+    let permit_root_login = read_sshd_setting("PermitRootLogin").filter(|s| !s.is_empty()).unwrap_or_else(|| "no".to_string());
+    let password_authentication = read_sshd_setting("PasswordAuthentication").filter(|s| !s.is_empty()).unwrap_or_else(|| "no".to_string());
 
     HttpResponse::Ok().json(SshSettingResponse {
         success: true,
