@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::process::Command;
 use tokio::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::os::unix::fs::PermissionsExt;
 
 use crate::utils::admin::verify_admin_access;
 
@@ -590,6 +591,51 @@ pub async fn service_autostart(
             success: false,
             message: "Service name cannot be empty".to_string(),
             error: Some("service_name is required".to_string()),
+        });
+    }
+
+    // 对 sysconfig 特殊处理
+    if service_name == "sysconfig" {
+        let override_path = std::path::Path::new("/etc/systemd/system/getty@tty1.service.d/override.conf");
+        if body.enable {
+            if let Some(parent) = override_path.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    return HttpResponse::InternalServerError().json(ServiceAutostartResponse {
+                        success: false,
+                        message: "Failed to create directory for override.conf".to_string(),
+                        error: Some(format!("IO error: {}", e)),
+                    });
+                }
+            }
+            let content = "[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin sysconfig --noclear %I $TERM\n";
+            if let Err(e) = std::fs::write(override_path, content) {
+                return HttpResponse::InternalServerError().json(ServiceAutostartResponse {
+                    success: false,
+                    message: "Failed to write override.conf".to_string(),
+                    error: Some(format!("IO error: {}", e)),
+                });
+            }
+            let perms = std::fs::Permissions::from_mode(0o644);
+            if let Err(e) = std::fs::set_permissions(override_path, perms) {
+                return HttpResponse::InternalServerError().json(ServiceAutostartResponse {
+                    success: false,
+                    message: "Failed to set permissions for override.conf".to_string(),
+                    error: Some(format!("IO error: {}", e)),
+                });
+            }
+        } else if override_path.exists() {
+            if let Err(e) = std::fs::remove_file(override_path) {
+                return HttpResponse::InternalServerError().json(ServiceAutostartResponse {
+                    success: false,
+                    message: "Failed to remove override.conf".to_string(),
+                    error: Some(format!("IO error: {}", e)),
+                });
+            }
+        }
+        return HttpResponse::Ok().json(ServiceAutostartResponse {
+            success: true,
+            message: format!("Sysconfig autologin {}d successfully", if body.enable { "enable" } else { "disable" }),
+            error: None,
         });
     }
 
