@@ -22,6 +22,7 @@ lazy_static! {
         cached_at: None,
         path: None,
     });
+    static ref UPDATE_STATUS: std::sync::Mutex<String> = std::sync::Mutex::new("idle".to_string());
 }
 
 // reboot 响应结构体
@@ -884,6 +885,7 @@ pub struct UpdateCheckResponse {
 #[derive(Deserialize)]
 pub struct Manifest {
     pub version: String,
+    pub filename: String,
 }
 
 /// system/update_check API - 检查系统更新（需要 JWT 认证）
@@ -892,6 +894,11 @@ pub async fn update_check(
     req: HttpRequest,
     pool: web::Data<crate::DbPool>,
 ) -> impl Responder {
+    // 设置更新状态为 check
+    if let Ok(mut status) = UPDATE_STATUS.lock() {
+        *status = "check".to_string();
+    }
+
     // 1. 验证 JWT token
     let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
         Ok(claims) => claims,
@@ -1016,6 +1023,448 @@ pub async fn update_check(
         update_available,
         current_version: local_version,
         latest_version: manifest.version,
+        error: None,
+    })
+}
+
+
+// ============================================================================
+// Update Download Task System
+// ============================================================================
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+lazy_static! {
+    static ref DOWNLOAD_TASKS: Arc<std::sync::Mutex<HashMap<String, DownloadTask>>> =
+        Arc::new(std::sync::Mutex::new(HashMap::new()));
+}
+
+/// Download task status
+#[derive(Serialize, Clone, Debug)]
+pub enum DownloadTaskStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+}
+
+/// Download task information
+#[derive(Serialize, Clone)]
+pub struct DownloadTask {
+    pub task_id: String,
+    pub status: DownloadTaskStatus,
+    pub progress: u8,              // 0-100
+    pub downloaded_bytes: u64,
+    pub total_bytes: u64,
+    pub filename: String,
+    pub file_path: String,
+    pub message: String,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+/// Start download response
+#[derive(Serialize)]
+pub struct StartDownloadResponse {
+    pub success: bool,
+    pub task_id: String,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// Get download task response
+#[derive(Serialize)]
+pub struct GetDownloadTaskResponse {
+    pub success: bool,
+    pub task: Option<DownloadTask>,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn update_download_task<F>(task_id: &str, updater: F)
+where
+    F: FnOnce(&mut DownloadTask),
+{
+    if let Ok(mut tasks) = DOWNLOAD_TASKS.lock() {
+        if let Some(task) = tasks.get_mut(task_id) {
+            updater(task);
+            task.updated_at = now_secs();
+        }
+    }
+}
+
+/// Check if there is already a pending or running download task
+fn has_active_download_task() -> Option<String> {
+    if let Ok(tasks) = DOWNLOAD_TASKS.lock() {
+        for (id, task) in tasks.iter() {
+            match task.status {
+                DownloadTaskStatus::Pending | DownloadTaskStatus::Running => {
+                    return Some(id.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// system/update_download/start API - Start system update download (Admin only)
+/// Only one download task can run at a time.
+#[post("/system/update_download/start")]
+pub async fn start_update_download(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 设置更新状态为 downloading
+    if let Ok(mut status) = UPDATE_STATUS.lock() {
+        *status = "downloading".to_string();
+    }
+
+    // 1. Verify admin access
+    let _username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    // 2. Check if another task is already active
+    if let Some(existing_task_id) = has_active_download_task() {
+        return HttpResponse::Conflict().json(StartDownloadResponse {
+            success: false,
+            task_id: existing_task_id,
+            message: "Another download task is already active".to_string(),
+            error: Some("Only one download task can run at a time".to_string()),
+        });
+    }
+
+    // 3. Read UPDATE_URL and CHANNEL from env
+    let update_url = match std::env::var("UPDATE_URL") {
+        Ok(u) => u,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(StartDownloadResponse {
+                success: false,
+                task_id: String::new(),
+                message: "UPDATE_URL not set".to_string(),
+                error: Some("UPDATE_URL environment variable is missing".to_string()),
+            });
+        }
+    };
+
+    let channel = match std::env::var("CHANNEL") {
+        Ok(c) => c,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(StartDownloadResponse {
+                success: false,
+                task_id: String::new(),
+                message: "CHANNEL not set".to_string(),
+                error: Some("CHANNEL environment variable is missing".to_string()),
+            });
+        }
+    };
+
+    let manifest_url = format!("{}/{}/manifest.json", update_url.trim_end_matches('/'), channel);
+
+    // 4. Fetch manifest.json to get filename
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(StartDownloadResponse {
+                success: false,
+                task_id: String::new(),
+                message: "Failed to build HTTP client".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    let manifest_text = match client.get(&manifest_url).send().await {
+        Ok(resp) => match resp.text().await {
+            Ok(t) => t,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(StartDownloadResponse {
+                    success: false,
+                    task_id: String::new(),
+                    message: "Failed to read manifest response".to_string(),
+                    error: Some(e.to_string()),
+                });
+            }
+        },
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(StartDownloadResponse {
+                success: false,
+                task_id: String::new(),
+                message: "Failed to fetch manifest".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    let manifest: Manifest = match serde_json::from_str(&manifest_text) {
+        Ok(m) => m,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(StartDownloadResponse {
+                success: false,
+                task_id: String::new(),
+                message: "Failed to parse manifest JSON".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    if manifest.filename.is_empty() {
+        return HttpResponse::InternalServerError().json(StartDownloadResponse {
+            success: false,
+            task_id: String::new(),
+            message: "Manifest filename is empty".to_string(),
+            error: Some("Invalid manifest: filename is empty".to_string()),
+        });
+    }
+
+    // 5. Create task
+    let task_id = uuid::Uuid::new_v4().to_string();
+    let now = now_secs();
+    let file_path = format!("/tmp/{}", manifest.filename);
+    let filename = manifest.filename.clone();
+    let download_url = format!(
+        "{}/{}/{}",
+        update_url.trim_end_matches('/'),
+        channel,
+        filename
+    );
+
+    let task = DownloadTask {
+        task_id: task_id.clone(),
+        status: DownloadTaskStatus::Pending,
+        progress: 0,
+        downloaded_bytes: 0,
+        total_bytes: 0,
+        filename: filename.clone(),
+        file_path: file_path.clone(),
+        message: "Waiting to start download".to_string(),
+        created_at: now,
+        updated_at: now,
+    };
+
+    DOWNLOAD_TASKS.lock().unwrap().insert(task_id.clone(), task);
+
+    // 6. Spawn background download
+    let task_id_clone = task_id.clone();
+    actix_web::rt::spawn(async move {
+        execute_download_task(task_id_clone, download_url, file_path).await;
+    });
+
+    HttpResponse::Ok().json(StartDownloadResponse {
+        success: true,
+        task_id,
+        message: "Download task started".to_string(),
+        error: None,
+    })
+}
+
+/// system/update_download/task/{task_id} API - Get download task status
+#[get("/system/update_download/task/{task_id}")]
+pub async fn get_update_download_task(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    path: web::Path<String>,
+) -> impl Responder {
+    // 1. Verify JWT token
+    let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    let task_id = path.into_inner();
+
+    match DOWNLOAD_TASKS.lock().unwrap().get(&task_id) {
+        Some(task) => HttpResponse::Ok().json(GetDownloadTaskResponse {
+            success: true,
+            task: Some(task.clone()),
+            message: "Task found".to_string(),
+            error: None,
+        }),
+        None => HttpResponse::NotFound().json(GetDownloadTaskResponse {
+            success: false,
+            task: None,
+            message: "Task not found".to_string(),
+            error: Some(format!("No task with id {}", task_id)),
+        }),
+    }
+}
+
+/// Background download execution
+async fn execute_download_task(task_id: String, download_url: String, file_path: String) {
+    // Update to running
+    update_download_task(&task_id, |t| {
+        t.status = DownloadTaskStatus::Running;
+        t.message = "Starting download...".to_string();
+        t.progress = 0;
+    });
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            update_download_task(&task_id, |t| {
+                t.status = DownloadTaskStatus::Failed;
+                t.message = format!("Failed to build HTTP client: {}", e);
+                t.progress = 0;
+            });
+            return;
+        }
+    };
+
+    let mut resp = match client.get(&download_url).send().await {
+        Ok(r) => {
+            if !r.status().is_success() {
+                update_download_task(&task_id, |t| {
+                    t.status = DownloadTaskStatus::Failed;
+                    t.message = format!("HTTP error: {}", r.status());
+                    t.progress = 0;
+                });
+                return;
+            }
+            r
+        }
+        Err(e) => {
+            update_download_task(&task_id, |t| {
+                t.status = DownloadTaskStatus::Failed;
+                t.message = format!("Failed to start download: {}", e);
+                t.progress = 0;
+            });
+            return;
+        }
+    };
+
+    let total_bytes = resp
+        .content_length()
+        .unwrap_or(0);
+
+    update_download_task(&task_id, |t| {
+        t.total_bytes = total_bytes;
+        t.message = "Downloading...".to_string();
+    });
+
+    let mut file = match std::fs::File::create(&file_path) {
+        Ok(f) => f,
+        Err(e) => {
+            update_download_task(&task_id, |t| {
+                t.status = DownloadTaskStatus::Failed;
+                t.message = format!("Failed to create file: {}", e);
+                t.progress = 0;
+            });
+            return;
+        }
+    };
+
+    let mut downloaded: u64 = 0;
+    let mut last_progress: u8 = 0;
+
+    loop {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                let chunk_len = chunk.len() as u64;
+                if let Err(e) = std::io::Write::write_all(&mut file, &chunk) {
+                    update_download_task(&task_id, |t| {
+                        t.status = DownloadTaskStatus::Failed;
+                        t.message = format!("Failed to write file: {}", e);
+                    });
+                    let _ = std::fs::remove_file(&file_path);
+                    return;
+                }
+                downloaded += chunk_len;
+
+                let progress = if total_bytes > 0 {
+                    ((downloaded as f64 / total_bytes as f64) * 100.0) as u8
+                } else {
+                    0
+                };
+
+                // Update progress every 1% change to reduce lock contention
+                if progress != last_progress {
+                    update_download_task(&task_id, |t| {
+                        t.downloaded_bytes = downloaded;
+                        t.progress = progress;
+                    });
+                    last_progress = progress;
+                }
+            }
+            Ok(None) => break,
+            Err(e) => {
+                update_download_task(&task_id, |t| {
+                    t.status = DownloadTaskStatus::Failed;
+                    t.message = format!("Download stream error: {}", e);
+                });
+                let _ = std::fs::remove_file(&file_path);
+                return;
+            }
+        }
+    }
+
+    if let Err(e) = std::io::Write::flush(&mut file) {
+        update_download_task(&task_id, |t| {
+            t.status = DownloadTaskStatus::Failed;
+            t.message = format!("Failed to flush file: {}", e);
+        });
+        let _ = std::fs::remove_file(&file_path);
+        return;
+    }
+
+    update_download_task(&task_id, |t| {
+        t.status = DownloadTaskStatus::Completed;
+        t.progress = 100;
+        t.downloaded_bytes = downloaded;
+        t.message = format!("Download completed: {}", t.filename);
+    });
+}
+
+// update_status 响应结构体
+#[derive(Serialize)]
+pub struct UpdateStatusResponse {
+    pub success: bool,
+    pub status: String,
+    pub error: Option<String>,
+}
+
+/// system/update_status API - 获取系统更新状态（需要 JWT 认证）
+#[get("/system/update_status")]
+pub async fn get_update_status(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    // 2. 读取全局状态
+    let status = match UPDATE_STATUS.lock() {
+        Ok(s) => s.clone(),
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(UpdateStatusResponse {
+                success: false,
+                status: "unknown".to_string(),
+                error: Some(format!("Failed to read update status: {}", e)),
+            });
+        }
+    };
+
+    HttpResponse::Ok().json(UpdateStatusResponse {
+        success: true,
+        status,
         error: None,
     })
 }
