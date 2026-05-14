@@ -295,6 +295,7 @@ async fn main() -> std::io::Result<()> {
             .service(apis::system::update_check)
             .service(apis::system::start_update_download)
             .service(apis::system::get_update_download_task)
+            .service(apis::system::stop_update_download)
             .service(apis::system::get_update_status)
             .service(apis::zfs::get_pool_advanced_setting)
             .service(apis::zfs::set_pool_advanced_setting)

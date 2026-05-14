@@ -1052,6 +1052,7 @@ pub enum DownloadTaskStatus {
     Running,
     Completed,
     Failed,
+    Stopped,
 }
 
 /// Download task information
@@ -1067,6 +1068,7 @@ pub struct DownloadTask {
     pub message: String,
     pub created_at: u64,
     pub updated_at: u64,
+    pub cancelled: bool,
 }
 
 /// Start download response
@@ -1254,6 +1256,7 @@ pub async fn start_update_download(
         message: "Waiting to start download".to_string(),
         created_at: now,
         updated_at: now,
+        cancelled: false,
     };
 
     DOWNLOAD_TASKS.lock().unwrap().insert(task_id.clone(), task);
@@ -1309,8 +1312,68 @@ pub async fn get_update_download_task(
     }
 }
 
+// stop_download 响应结构体
+#[derive(Serialize)]
+pub struct StopDownloadResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// system/update_download/stop API - Stop active update download task (Admin only)
+#[post("/system/update_download/stop")]
+pub async fn stop_update_download(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. Verify admin access
+    let _username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    // 2. Find active task
+    let active_task_id = {
+        if let Ok(tasks) = DOWNLOAD_TASKS.lock() {
+            tasks
+                .iter()
+                .find(|(_, task)| {
+                    matches!(task.status, DownloadTaskStatus::Pending | DownloadTaskStatus::Running)
+                })
+                .map(|(id, _)| id.clone())
+        } else {
+            None
+        }
+    };
+
+    let task_id = match active_task_id {
+        Some(id) => id,
+        None => {
+            return HttpResponse::BadRequest().json(StopDownloadResponse {
+                success: false,
+                message: "No active download task".to_string(),
+                error: Some("There is no pending or running download task to stop".to_string()),
+            });
+        }
+    };
+
+    // 3. Mark task as cancelled
+    update_download_task(&task_id, |t| {
+        t.cancelled = true;
+        t.message = "Stopping download...".to_string();
+    });
+
+    HttpResponse::Ok().json(StopDownloadResponse {
+        success: true,
+        message: format!("Download task '{}' is being stopped", task_id),
+        error: None,
+    })
+}
+
 /// Background download execution
 async fn execute_download_task(task_id: String, download_url: String, file_path: String) {
+    log::info!("execute_download_task started: task_id={}, download_url={}, file_path={}", task_id, download_url, file_path);
+
     // Update to running
     update_download_task(&task_id, |t| {
         t.status = DownloadTaskStatus::Running;
@@ -1322,8 +1385,12 @@ async fn execute_download_task(task_id: String, download_url: String, file_path:
         .timeout(std::time::Duration::from_secs(600))
         .build()
     {
-        Ok(c) => c,
+        Ok(c) => {
+            log::info!("HTTP client built successfully");
+            c
+        }
         Err(e) => {
+            log::error!("Failed to build HTTP client: {}", e);
             update_download_task(&task_id, |t| {
                 t.status = DownloadTaskStatus::Failed;
                 t.message = format!("Failed to build HTTP client: {}", e);
@@ -1336,6 +1403,7 @@ async fn execute_download_task(task_id: String, download_url: String, file_path:
     let mut resp = match client.get(&download_url).send().await {
         Ok(r) => {
             if !r.status().is_success() {
+                log::error!("HTTP error: status={}", r.status());
                 update_download_task(&task_id, |t| {
                     t.status = DownloadTaskStatus::Failed;
                     t.message = format!("HTTP error: {}", r.status());
@@ -1343,9 +1411,11 @@ async fn execute_download_task(task_id: String, download_url: String, file_path:
                 });
                 return;
             }
+            log::info!("HTTP response received: status={}", r.status());
             r
         }
         Err(e) => {
+            log::error!("Failed to start download: {}", e);
             update_download_task(&task_id, |t| {
                 t.status = DownloadTaskStatus::Failed;
                 t.message = format!("Failed to start download: {}", e);
@@ -1358,6 +1428,7 @@ async fn execute_download_task(task_id: String, download_url: String, file_path:
     let total_bytes = resp
         .content_length()
         .unwrap_or(0);
+    log::info!("total_bytes={}", total_bytes);
 
     update_download_task(&task_id, |t| {
         t.total_bytes = total_bytes;
@@ -1365,8 +1436,12 @@ async fn execute_download_task(task_id: String, download_url: String, file_path:
     });
 
     let mut file = match std::fs::File::create(&file_path) {
-        Ok(f) => f,
+        Ok(f) => {
+            log::info!("File created successfully: file_path={}", file_path);
+            f
+        }
         Err(e) => {
+            log::error!("Failed to create file: file_path={}, error={}", file_path, e);
             update_download_task(&task_id, |t| {
                 t.status = DownloadTaskStatus::Failed;
                 t.message = format!("Failed to create file: {}", e);
@@ -1378,12 +1453,38 @@ async fn execute_download_task(task_id: String, download_url: String, file_path:
 
     let mut downloaded: u64 = 0;
     let mut last_progress: u8 = 0;
+    log::info!("Starting download loop: downloaded={}, last_progress={}", downloaded, last_progress);
 
     loop {
+        // Check cancellation
+        let is_cancelled = {
+            if let Ok(tasks) = DOWNLOAD_TASKS.lock() {
+                tasks.get(&task_id).map(|t| t.cancelled).unwrap_or(false)
+            } else {
+                false
+            }
+        };
+        if is_cancelled {
+            log::info!("Download task cancelled: task_id={}", task_id);
+            let _ = std::fs::remove_file(&file_path);
+            update_download_task(&task_id, |t| {
+                t.status = DownloadTaskStatus::Stopped;
+                t.message = "Download stopped by user".to_string();
+            });
+            // Reset update status
+            if let Ok(mut status) = UPDATE_STATUS.lock() {
+                status.0 = "idle".to_string();
+                status.1 = String::new();
+            }
+            return;
+        }
+
         match resp.chunk().await {
             Ok(Some(chunk)) => {
                 let chunk_len = chunk.len() as u64;
+                log::info!("Received chunk: chunk_len={}", chunk_len);
                 if let Err(e) = std::io::Write::write_all(&mut file, &chunk) {
+                    log::error!("Failed to write file: {}", e);
                     update_download_task(&task_id, |t| {
                         t.status = DownloadTaskStatus::Failed;
                         t.message = format!("Failed to write file: {}", e);
@@ -1392,12 +1493,14 @@ async fn execute_download_task(task_id: String, download_url: String, file_path:
                     return;
                 }
                 downloaded += chunk_len;
+                log::info!("downloaded={}", downloaded);
 
                 let progress = if total_bytes > 0 {
                     ((downloaded as f64 / total_bytes as f64) * 100.0) as u8
                 } else {
                     0
                 };
+                log::info!("progress={}", progress);
 
                 // Update progress every 1% change to reduce lock contention
                 if progress != last_progress {
@@ -1406,10 +1509,15 @@ async fn execute_download_task(task_id: String, download_url: String, file_path:
                         t.progress = progress;
                     });
                     last_progress = progress;
+                    log::info!("last_progress updated to {}", last_progress);
                 }
             }
-            Ok(None) => break,
+            Ok(None) => {
+                log::info!("Download stream ended");
+                break;
+            }
             Err(e) => {
+                log::error!("Download stream error: {}", e);
                 update_download_task(&task_id, |t| {
                     t.status = DownloadTaskStatus::Failed;
                     t.message = format!("Download stream error: {}", e);
@@ -1421,6 +1529,7 @@ async fn execute_download_task(task_id: String, download_url: String, file_path:
     }
 
     if let Err(e) = std::io::Write::flush(&mut file) {
+        log::error!("Failed to flush file: {}", e);
         update_download_task(&task_id, |t| {
             t.status = DownloadTaskStatus::Failed;
             t.message = format!("Failed to flush file: {}", e);
@@ -1428,6 +1537,7 @@ async fn execute_download_task(task_id: String, download_url: String, file_path:
         let _ = std::fs::remove_file(&file_path);
         return;
     }
+    log::info!("File flushed successfully");
 
     update_download_task(&task_id, |t| {
         t.status = DownloadTaskStatus::Completed;
@@ -1435,6 +1545,7 @@ async fn execute_download_task(task_id: String, download_url: String, file_path:
         t.downloaded_bytes = downloaded;
         t.message = format!("Download completed: {}", t.filename);
     });
+    log::info!("execute_download_task completed: task_id={}, downloaded={}, file_path={}", task_id, downloaded, file_path);
 }
 
 // update_status 响应结构体
