@@ -870,3 +870,152 @@ pub async fn set_ssh_setting(
         error: None,
     })
 }
+
+// update_check 响应结构体
+#[derive(Serialize)]
+pub struct UpdateCheckResponse {
+    pub success: bool,
+    pub update_available: bool,
+    pub current_version: String,
+    pub latest_version: String,
+    pub error: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct Manifest {
+    pub version: String,
+}
+
+/// system/update_check API - 检查系统更新（需要 JWT 认证）
+#[get("/system/update_check")]
+pub async fn update_check(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    // 2. 读取本地版本
+    let local_version = match std::fs::read_to_string("/.data/.version") {
+        Ok(v) => v.trim().to_string(),
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(UpdateCheckResponse {
+                success: false,
+                update_available: false,
+                current_version: "".to_string(),
+                latest_version: "".to_string(),
+                error: Some(format!("Failed to read local version: {}", e)),
+            });
+        }
+    };
+
+    // 3. 构建 manifest URL
+    let update_url = match std::env::var("UPDATE_URL") {
+        Ok(u) => u,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(UpdateCheckResponse {
+                success: false,
+                update_available: false,
+                current_version: local_version.clone(),
+                latest_version: "".to_string(),
+                error: Some("UPDATE_URL not set".to_string()),
+            });
+        }
+    };
+
+    let channel = match std::env::var("CHANNEL") {
+        Ok(c) => c,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(UpdateCheckResponse {
+                success: false,
+                update_available: false,
+                current_version: local_version.clone(),
+                latest_version: "".to_string(),
+                error: Some("CHANNEL not set".to_string()),
+            });
+        }
+    };
+
+    let manifest_url = format!("{}/{}/manifest.json", update_url.trim_end_matches('/'), channel);
+
+    // 4. 获取远程 manifest
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(UpdateCheckResponse {
+                success: false,
+                update_available: false,
+                current_version: local_version.clone(),
+                latest_version: "".to_string(),
+                error: Some(format!("Failed to build HTTP client: {}", e)),
+            });
+        }
+    };
+
+    let resp = match client.get(&manifest_url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(UpdateCheckResponse {
+                success: false,
+                update_available: false,
+                current_version: local_version.clone(),
+                latest_version: "".to_string(),
+                error: Some(format!("Failed to fetch manifest: {}", e)),
+            });
+        }
+    };
+
+    let manifest_text = match resp.text().await {
+        Ok(t) => t,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(UpdateCheckResponse {
+                success: false,
+                update_available: false,
+                current_version: local_version.clone(),
+                latest_version: "".to_string(),
+                error: Some(format!("Failed to read manifest response: {}", e)),
+            });
+        }
+    };
+
+    let manifest: Manifest = match serde_json::from_str(&manifest_text) {
+        Ok(m) => m,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(UpdateCheckResponse {
+                success: false,
+                update_available: false,
+                current_version: local_version.clone(),
+                latest_version: "".to_string(),
+                error: Some(format!("Failed to parse manifest JSON: {}", e)),
+            });
+        }
+    };
+
+    // 5. 比较版本（取后6位进行字符串大小比较）
+    fn get_version_suffix(v: &str) -> &str {
+        if v.len() >= 6 {
+            &v[v.len() - 6..]
+        } else {
+            v
+        }
+    }
+
+    let local_suffix = get_version_suffix(&local_version);
+    let remote_suffix = get_version_suffix(&manifest.version);
+
+    let update_available = remote_suffix > local_suffix;
+
+    HttpResponse::Ok().json(UpdateCheckResponse {
+        success: true,
+        update_available,
+        current_version: local_version,
+        latest_version: manifest.version,
+        error: None,
+    })
+}
