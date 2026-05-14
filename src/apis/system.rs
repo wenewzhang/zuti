@@ -894,10 +894,6 @@ pub async fn update_check(
     req: HttpRequest,
     pool: web::Data<crate::DbPool>,
 ) -> impl Responder {
-    // 设置更新状态为 check
-    if let Ok(mut status) = UPDATE_STATUS.lock() {
-        *status = "check".to_string();
-    }
 
     // 1. 验证 JWT token
     let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
@@ -905,6 +901,10 @@ pub async fn update_check(
         Err(response) => return response,
     };
 
+    // 设置更新状态为 check
+    if let Ok(mut status) = UPDATE_STATUS.lock() {
+        *status = "check".to_string();
+    }
     // 2. 读取本地版本
     let local_version = match std::fs::read_to_string("/.data/.version") {
         Ok(v) => v.trim().to_string(),
@@ -1018,6 +1018,11 @@ pub async fn update_check(
 
     let update_available = remote_suffix > local_suffix;
 
+    // 设置更新状态为 check
+    if let Ok(mut status) = UPDATE_STATUS.lock() {
+        *status = "idle".to_string();
+    }
+
     HttpResponse::Ok().json(UpdateCheckResponse {
         success: true,
         update_available,
@@ -1123,10 +1128,6 @@ pub async fn start_update_download(
     req: HttpRequest,
     pool: web::Data<crate::DbPool>,
 ) -> impl Responder {
-    // 设置更新状态为 downloading
-    if let Ok(mut status) = UPDATE_STATUS.lock() {
-        *status = "downloading".to_string();
-    }
 
     // 1. Verify admin access
     let _username = match verify_admin_access(&req, &pool).await {
@@ -1262,6 +1263,11 @@ pub async fn start_update_download(
     actix_web::rt::spawn(async move {
         execute_download_task(task_id_clone, download_url, file_path).await;
     });
+
+    // 设置更新状态为 downloading
+    if let Ok(mut status) = UPDATE_STATUS.lock() {
+        *status = "downloading".to_string();
+    }
 
     HttpResponse::Ok().json(StartDownloadResponse {
         success: true,
