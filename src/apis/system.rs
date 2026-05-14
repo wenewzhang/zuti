@@ -22,7 +22,7 @@ lazy_static! {
         cached_at: None,
         path: None,
     });
-    static ref UPDATE_STATUS: std::sync::Mutex<String> = std::sync::Mutex::new("idle".to_string());
+    static ref UPDATE_STATUS: std::sync::Mutex<(String, String)> = std::sync::Mutex::new(("idle".to_string(), String::new()));
 }
 
 // reboot 响应结构体
@@ -903,7 +903,7 @@ pub async fn update_check(
 
     // 设置更新状态为 check
     if let Ok(mut status) = UPDATE_STATUS.lock() {
-        *status = "check".to_string();
+        status.0 = "check".to_string();
     }
     // 2. 读取本地版本
     let local_version = match std::fs::read_to_string("/.data/.version") {
@@ -1018,9 +1018,9 @@ pub async fn update_check(
 
     let update_available = remote_suffix > local_suffix;
 
-    // 设置更新状态为 check
+    // 设置更新状态为 idle
     if let Ok(mut status) = UPDATE_STATUS.lock() {
-        *status = "idle".to_string();
+        status.0 = "idle".to_string();
     }
 
     HttpResponse::Ok().json(UpdateCheckResponse {
@@ -1266,7 +1266,8 @@ pub async fn start_update_download(
 
     // 设置更新状态为 downloading
     if let Ok(mut status) = UPDATE_STATUS.lock() {
-        *status = "downloading".to_string();
+        status.0 = "downloading".to_string();
+        status.1 = task_id.clone();
     }
 
     HttpResponse::Ok().json(StartDownloadResponse {
@@ -1441,6 +1442,7 @@ async fn execute_download_task(task_id: String, download_url: String, file_path:
 pub struct UpdateStatusResponse {
     pub success: bool,
     pub status: String,
+    pub task_id: String,
     pub error: Option<String>,
 }
 
@@ -1457,12 +1459,13 @@ pub async fn get_update_status(
     };
 
     // 2. 读取全局状态
-    let status = match UPDATE_STATUS.lock() {
+    let (status, task_id) = match UPDATE_STATUS.lock() {
         Ok(s) => s.clone(),
         Err(e) => {
             return HttpResponse::InternalServerError().json(UpdateStatusResponse {
                 success: false,
                 status: "unknown".to_string(),
+                task_id: String::new(),
                 error: Some(format!("Failed to read update status: {}", e)),
             });
         }
@@ -1471,6 +1474,7 @@ pub async fn get_update_status(
     HttpResponse::Ok().json(UpdateStatusResponse {
         success: true,
         status,
+        task_id,
         error: None,
     })
 }
