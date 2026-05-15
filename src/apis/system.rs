@@ -5,8 +5,11 @@ use std::process::Command;
 use tokio::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::UnixStream;
+use std::io::{BufRead, BufReader, Write};
 
 use crate::utils::admin::verify_admin_access;
+use crate::utils::consts::ZUTI_HELPER_SOCK;
 
 const RECOMMENDED_APPS_CACHE_TTL_SECONDS: u64 = 3600;
 
@@ -1665,4 +1668,162 @@ pub async fn get_update_status(
         task_id,
         error: None,
     })
+}
+
+// upgrade 请求结构体
+#[derive(Deserialize)]
+pub struct UpgradeRequest {
+    pub file_path: Option<String>,
+}
+
+// upgrade 响应结构体
+#[derive(Serialize)]
+pub struct UpgradeResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+/// system/update_download/upgrade API - 执行系统升级（需要 JWT 认证，仅管理员可用）
+#[post("/system/update_download/upgrade")]
+pub async fn upgrade_system(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    body: web::Json<UpgradeRequest>,
+) -> impl Responder {
+    // 1. 验证 JWT token 并检查 admin 权限
+    let _username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    // 2. 确定升级文件路径
+    let file_path = if let Some(path) = body.file_path.as_ref() {
+        let path = path.trim();
+        if path.is_empty() {
+            return HttpResponse::BadRequest().json(UpgradeResponse {
+                success: false,
+                message: "File path cannot be empty".to_string(),
+                error: Some("file_path is empty".to_string()),
+            });
+        }
+        path.to_string()
+    } else {
+        // 自动查找已完成的下载任务
+        let completed_task = {
+            if let Ok(tasks) = DOWNLOAD_TASKS.lock() {
+                tasks
+                    .values()
+                    .find(|t| matches!(t.status, DownloadTaskStatus::Completed))
+                    .cloned()
+            } else {
+                None
+            }
+        };
+        match completed_task {
+            Some(task) => task.file_path,
+            None => {
+                return HttpResponse::BadRequest().json(UpgradeResponse {
+                    success: false,
+                    message: "No completed download task found".to_string(),
+                    error: Some("Please start a download first or provide file_path".to_string()),
+                });
+            }
+        }
+    };
+
+    // 3. 检查文件是否存在
+    if !std::path::Path::new(&file_path).exists() {
+        return HttpResponse::BadRequest().json(UpgradeResponse {
+            success: false,
+            message: "Update file not found".to_string(),
+            error: Some(format!("File does not exist: {}", file_path)),
+        });
+    }
+
+    // 4. 设置 UPDATE_STATUS 为 upgrading
+    if let Ok(mut status) = UPDATE_STATUS.lock() {
+        status.0 = "upgrading".to_string();
+        status.1 = file_path.clone();
+    }
+
+    // 5. 向 zuti-helper 发送 upgrade 指令
+    let mut stream = match UnixStream::connect(ZUTI_HELPER_SOCK) {
+        Ok(s) => s,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(UpgradeResponse {
+                success: false,
+                message: "Failed to connect to zuti-helper".to_string(),
+                error: Some(format!("Unix socket error: {}", e)),
+            });
+        }
+    };
+
+    let request_json = match serde_json::to_string(&serde_json::json!({
+        "action": "upgrade",
+        "file": file_path,
+    })) {
+        Ok(j) => j,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(UpgradeResponse {
+                success: false,
+                message: "Failed to serialize request".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    if let Err(e) = writeln!(stream, "{}", request_json) {
+        return HttpResponse::InternalServerError().json(UpgradeResponse {
+            success: false,
+            message: "Failed to send request to zuti-helper".to_string(),
+            error: Some(e.to_string()),
+        });
+    }
+
+    let reader = BufReader::new(&stream);
+    let response_line = match reader.lines().next() {
+        Some(Ok(line)) => line,
+        Some(Err(e)) => {
+            return HttpResponse::InternalServerError().json(UpgradeResponse {
+                success: false,
+                message: "Failed to read response from zuti-helper".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+        None => {
+            return HttpResponse::InternalServerError().json(UpgradeResponse {
+                success: false,
+                message: "No response from zuti-helper".to_string(),
+                error: None,
+            });
+        }
+    };
+
+    let helper_resp: serde_json::Value = match serde_json::from_str(&response_line) {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(UpgradeResponse {
+                success: false,
+                message: "Invalid response from zuti-helper".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    let success = helper_resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    if success {
+        HttpResponse::Ok().json(UpgradeResponse {
+            success: true,
+            message: "Upgrade command sent successfully".to_string(),
+            error: None,
+        })
+    } else {
+        let error = helper_resp.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error from zuti-helper");
+        HttpResponse::InternalServerError().json(UpgradeResponse {
+            success: false,
+            message: "Upgrade failed".to_string(),
+            error: Some(error.to_string()),
+        })
+    }
 }
