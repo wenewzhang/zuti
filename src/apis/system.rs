@@ -886,6 +886,7 @@ pub struct UpdateCheckResponse {
 pub struct Manifest {
     pub version: String,
     pub filename: String,
+    pub checksum: String,
 }
 
 /// system/update_check API - 检查系统更新（需要 JWT 认证）
@@ -1233,6 +1234,15 @@ pub async fn start_update_download(
         });
     }
 
+    if manifest.checksum.is_empty() {
+        return HttpResponse::InternalServerError().json(StartDownloadResponse {
+            success: false,
+            task_id: String::new(),
+            message: "Manifest checksum is empty".to_string(),
+            error: Some("Invalid manifest: checksum is empty".to_string()),
+        });
+    }
+
     // 5. Create task
     let task_id = uuid::Uuid::new_v4().to_string();
     let now = now_secs();
@@ -1244,6 +1254,8 @@ pub async fn start_update_download(
         channel,
         filename
     );
+
+    let expected_checksum = manifest.checksum.clone();
 
     let task = DownloadTask {
         task_id: task_id.clone(),
@@ -1264,7 +1276,7 @@ pub async fn start_update_download(
     // 6. Spawn background download
     let task_id_clone = task_id.clone();
     actix_web::rt::spawn(async move {
-        execute_download_task(task_id_clone, download_url, file_path).await;
+        execute_download_task(task_id_clone, download_url, file_path, expected_checksum).await;
     });
 
     // 设置更新状态为 downloading
@@ -1371,7 +1383,7 @@ pub async fn stop_update_download(
 }
 
 /// Background download execution
-async fn execute_download_task(task_id: String, download_url: String, file_path: String) {
+async fn execute_download_task(task_id: String, download_url: String, file_path: String, expected_checksum: String) {
     log::info!("execute_download_task started: task_id={}, download_url={}, file_path={}", task_id, download_url, file_path);
 
     // Update to running
@@ -1539,11 +1551,61 @@ async fn execute_download_task(task_id: String, download_url: String, file_path:
     }
     log::info!("File flushed successfully");
 
+    // Verify SHA256 checksum using sha256sum command
+    let output = match Command::new("sha256sum")
+        .arg(&file_path)
+        .output()
+    {
+        Ok(result) => result,
+        Err(e) => {
+            log::error!("Failed to run sha256sum: {}", e);
+            let _ = std::fs::remove_file(&file_path);
+            update_download_task(&task_id, |t| {
+                t.status = DownloadTaskStatus::Failed;
+                t.message = format!("Failed to run sha256sum: {}", e);
+            });
+            return;
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::error!("sha256sum command failed: {}", stderr);
+        let _ = std::fs::remove_file(&file_path);
+        update_download_task(&task_id, |t| {
+            t.status = DownloadTaskStatus::Failed;
+            t.message = format!("sha256sum command failed: {}", stderr);
+        });
+        return;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let actual_checksum = stdout.split_whitespace().next().unwrap_or("");
+    if actual_checksum != expected_checksum {
+        log::error!(
+            "Checksum mismatch: expected={}, actual={}",
+            expected_checksum,
+            actual_checksum
+        );
+        let _ = std::fs::remove_file(&file_path);
+        update_download_task(&task_id, |t| {
+            t.status = DownloadTaskStatus::Failed;
+            t.message = format!(
+                "Checksum mismatch: expected={}, actual={}",
+                expected_checksum,
+                actual_checksum
+            );
+        });
+        return;
+    }
+
+    log::info!("Checksum verified successfully: {}", actual_checksum);
+
     update_download_task(&task_id, |t| {
         t.status = DownloadTaskStatus::Completed;
         t.progress = 100;
         t.downloaded_bytes = downloaded;
-        t.message = format!("Download completed: {}", t.filename);
+        t.message = format!("Download completed and verified: {}", t.filename);
     });
     log::info!("execute_download_task completed: task_id={}, downloaded={}, file_path={}", task_id, downloaded, file_path);
 }
