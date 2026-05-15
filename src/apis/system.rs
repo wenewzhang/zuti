@@ -902,11 +902,31 @@ pub async fn update_check(
         Err(response) => return response,
     };
 
-    // 设置更新状态为 check
-    if let Ok(mut status) = UPDATE_STATUS.lock() {
-        status.0 = "check".to_string();
+    // 2. 检查 UPDATE_STATUS 是否为 idle
+    let current_status = match UPDATE_STATUS.lock() {
+        Ok(s) => s.0.clone(),
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(UpdateCheckResponse {
+                success: false,
+                update_available: false,
+                current_version: "".to_string(),
+                latest_version: "".to_string(),
+                error: Some("Failed to read update status".to_string()),
+            });
+        }
+    };
+
+    if current_status != "idle" {
+        return HttpResponse::Conflict().json(UpdateCheckResponse {
+            success: false,
+            update_available: false,
+            current_version: "".to_string(),
+            latest_version: "".to_string(),
+            error: Some(format!("Update check unavailable, current status: {}", current_status)),
+        });
     }
-    // 2. 读取本地版本
+
+    // 3. 读取本地版本
     let local_version = match std::fs::read_to_string("/.data/.version") {
         Ok(v) => v.trim().to_string(),
         Err(e) => {
@@ -920,7 +940,7 @@ pub async fn update_check(
         }
     };
 
-    // 3. 构建 manifest URL
+    // 4. 构建 manifest URL
     let update_url = match std::env::var("UPDATE_URL") {
         Ok(u) => u,
         Err(_) => {
@@ -949,7 +969,7 @@ pub async fn update_check(
 
     let manifest_url = format!("{}/{}/manifest.json", update_url.trim_end_matches('/'), channel);
 
-    // 4. 获取远程 manifest
+    // 5. 获取远程 manifest
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
@@ -1005,7 +1025,7 @@ pub async fn update_check(
         }
     };
 
-    // 5. 比较版本（取后6位进行字符串大小比较）
+    // 6. 比较版本（取后6位进行字符串大小比较）
     fn get_version_suffix(v: &str) -> &str {
         if v.len() >= 6 {
             &v[v.len() - 6..]
@@ -1018,11 +1038,6 @@ pub async fn update_check(
     let remote_suffix = get_version_suffix(&manifest.version);
 
     let update_available = remote_suffix > local_suffix;
-
-    // 设置更新状态为 idle
-    if let Ok(mut status) = UPDATE_STATUS.lock() {
-        status.0 = "idle".to_string();
-    }
 
     HttpResponse::Ok().json(UpdateCheckResponse {
         success: true,
