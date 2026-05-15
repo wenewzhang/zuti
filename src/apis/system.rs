@@ -1362,6 +1362,9 @@ pub async fn stop_update_download(
         Err(response) => return response,
     };
 
+    if let Ok(mut status) = UPDATE_STATUS.lock() {
+        status.0 = "idle".to_string();
+    }    
     // 2. Find active task
     let active_task_id = {
         if let Ok(tasks) = DOWNLOAD_TASKS.lock() {
