@@ -890,6 +890,18 @@ pub struct Manifest {
     pub version: String,
     pub filename: String,
     pub checksum: String,
+    pub filesize: u64,
+}
+
+fn parse_df_available(df_output: &str) -> Option<u64> {
+    let line = df_output.lines().nth(1)?;
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    // df -B1 output format: Filesystem 1B-blocks Used Available Use% Mounted on
+    // Available is the 4th column (index 3)
+    if parts.len() < 5 {
+        return None;
+    }
+    parts[3].parse().ok()
 }
 
 /// system/update_check API - 检查系统更新（需要 JWT 认证）
@@ -1261,7 +1273,35 @@ pub async fn start_update_download(
         });
     }
 
-    // 5. Create task
+    // 5. Check available disk space using df -B1 /
+    let df_output = match Command::new("df").args(&["-B1", "/"]).output() {
+        Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(StartDownloadResponse {
+                success: false,
+                task_id: String::new(),
+                message: "Failed to check disk space".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    let available_space = parse_df_available(&df_output).unwrap_or(0);
+    let required_space = manifest.filesize * 2 + 2 * 1024 * 1024 * 1024; // filesize * 2 + 2GB
+
+    if available_space < required_space {
+        return HttpResponse::InternalServerError().json(StartDownloadResponse {
+            success: false,
+            task_id: String::new(),
+            message: format!(
+                "Insufficient disk space. Available: {} bytes, Required: {} bytes (filesize * 2 + 2GB)",
+                available_space, required_space
+            ),
+            error: Some("Disk space check failed".to_string()),
+        });
+    }
+
+    // 6. Create task
     let task_id = uuid::Uuid::new_v4().to_string();
     let now = now_secs();
     let file_path = format!("/tmp/{}", manifest.filename);
