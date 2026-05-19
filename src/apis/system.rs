@@ -12,6 +12,7 @@ use crate::utils::admin::verify_admin_access;
 use crate::utils::consts::ZUTI_HELPER_SOCK;
 
 const RECOMMENDED_APPS_CACHE_TTL_SECONDS: u64 = 3600;
+const EXTRA_SPACE_BYTES: u64 = 1 * 1024 * 1024 * 1024;
 
 struct RecommendedAppsCache {
     data: Option<serde_json::Value>,
@@ -1287,7 +1288,7 @@ pub async fn start_update_download(
     };
 
     let available_space = parse_df_available(&df_output).unwrap_or(0);
-    let required_space = manifest.filesize * 2 + 2 * 1024 * 1024 * 1024; // filesize * 2 + 2GB
+    let required_space = manifest.filesize * 3 + EXTRA_SPACE_BYTES; // filesize * 2 + 2GB
 
     if available_space < required_space {
         return HttpResponse::InternalServerError().json(StartDownloadResponse {
