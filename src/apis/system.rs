@@ -1719,6 +1719,14 @@ pub struct UpgradeRequest {
     pub file_path: Option<String>,
 }
 
+// upgrade progress 响应结构体
+#[derive(Serialize)]
+pub struct UpgradeProgressResponse {
+    pub success: bool,
+    pub data: Option<serde_json::Value>,
+    pub error: Option<String>,
+}
+
 // upgrade 响应结构体
 #[derive(Serialize)]
 pub struct UpgradeResponse {
@@ -1866,6 +1874,98 @@ pub async fn upgrade_system(
         HttpResponse::InternalServerError().json(UpgradeResponse {
             success: false,
             message: "Upgrade failed".to_string(),
+            error: Some(error.to_string()),
+        })
+    }
+}
+
+/// system/upgrade/progress API - 获取系统升级进度（需要 JWT 认证）
+#[get("/system/upgrade/progress")]
+pub async fn get_upgrade_progress(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    // 1. 验证 JWT token
+    let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    // 2. 向 zuti-helper 发送 upgrading_progress 指令
+    let mut stream = match UnixStream::connect(ZUTI_HELPER_SOCK) {
+        Ok(s) => s,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(UpgradeProgressResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to connect to zuti-helper: {}", e)),
+            });
+        }
+    };
+
+    let request_json = match serde_json::to_string(&serde_json::json!({
+        "action": "upgrading_progress",
+    })) {
+        Ok(j) => j,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(UpgradeProgressResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to serialize request: {}", e)),
+            });
+        }
+    };
+
+    if let Err(e) = writeln!(stream, "{}", request_json) {
+        return HttpResponse::InternalServerError().json(UpgradeProgressResponse {
+            success: false,
+            data: None,
+            error: Some(format!("Failed to send request to zuti-helper: {}", e)),
+        });
+    }
+
+    let reader = BufReader::new(&stream);
+    let response_line = match reader.lines().next() {
+        Some(Ok(line)) => line,
+        Some(Err(e)) => {
+            return HttpResponse::InternalServerError().json(UpgradeProgressResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to read response from zuti-helper: {}", e)),
+            });
+        }
+        None => {
+            return HttpResponse::InternalServerError().json(UpgradeProgressResponse {
+                success: false,
+                data: None,
+                error: Some("No response from zuti-helper".to_string()),
+            });
+        }
+    };
+
+    let helper_resp: serde_json::Value = match serde_json::from_str(&response_line) {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(UpgradeProgressResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Invalid response from zuti-helper: {}", e)),
+            });
+        }
+    };
+
+    let success = helper_resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    if success {
+        HttpResponse::Ok().json(UpgradeProgressResponse {
+            success: true,
+            data: helper_resp.get("data").cloned(),
+            error: None,
+        })
+    } else {
+        let error = helper_resp.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error from zuti-helper");
+        HttpResponse::InternalServerError().json(UpgradeProgressResponse {
+            success: false,
+            data: None,
             error: Some(error.to_string()),
         })
     }
