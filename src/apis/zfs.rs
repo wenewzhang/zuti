@@ -310,6 +310,10 @@ pub async fn set_bootfs(
     //two mountpoint=/ & canmount=on dataset should cause systemd-journald break message:
     // systemd-journald: time jumped backwards rotating
     // systemd-journald: failed to send watchdog=1 notification message:connection refused 
+
+    //one dataset canmount=on & set to bootfs should boot normal
+    //one dataset canmount=on & boot from another dataset, should cause bug
+    //because canmount=on dataset should mount unexpected 
     // 4. 获取旧的 bootfs dataset 并调整 canmount
     let old_bootfs_ds = match Command::new("zpool")
         .args(["get", "bootfs", "-H", pool_name])
@@ -366,7 +370,7 @@ pub async fn set_bootfs(
     }
 
     match Command::new("zfs")
-        .args(["set", "canmount=on", dataset])
+        .args(["set", "canmount=noauto", dataset])
         .output()
     {
         Ok(output) if output.status.success() => {
