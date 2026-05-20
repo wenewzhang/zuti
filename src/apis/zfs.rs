@@ -307,7 +307,81 @@ pub async fn set_bootfs(
         });
     }
 
-    // 4. 构建并执行 zpool set bootfs 命令
+    //two mountpoint=/ & canmount=on dataset should cause systemd-journald break message:
+    // systemd-journald: time jumped backwards rotating
+    // systemd-journald: failed to send watchdog=1 notification message:connection refused 
+    // 4. 获取旧的 bootfs dataset 并调整 canmount
+    let old_bootfs_ds = match Command::new("zpool")
+        .args(["get", "bootfs", "-H", pool_name])
+        .output()
+    {
+        Ok(result) => {
+            let stdout = String::from_utf8_lossy(&result.stdout);
+            let ds = stdout.lines().next().and_then(|line| {
+                let parts: Vec<&str> = line.split('\t').collect();
+                if parts.len() >= 3 {
+                    let value = parts[2].trim();
+                    if value != "-" && !value.is_empty() {
+                        Some(value.to_string())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            });
+            if let Some(ref old_ds) = ds {
+                log::info!("Pool '{}' current bootfs: '{}'", pool_name, old_ds);
+            } else {
+                log::info!("Pool '{}' has no current bootfs set", pool_name);
+            }
+            ds
+        }
+        Err(e) => {
+            log::warn!("Failed to get current bootfs for pool '{}': {}", pool_name, e);
+            None
+        }
+    };
+
+    if let Some(ref old_ds) = old_bootfs_ds {
+        if old_ds != dataset {
+            match Command::new("zfs")
+                .args(["set", "canmount=noauto", old_ds])
+                .output()
+            {
+                Ok(output) if output.status.success() => {
+                    log::info!("Set canmount=noauto for old bootfs dataset '{}'", old_ds);
+                }
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    log::warn!("Failed to set canmount=noauto for '{}': {}", old_ds, stderr.trim());
+                }
+                Err(e) => {
+                    log::warn!("Command error when setting canmount=noauto for '{}': {}", old_ds, e);
+                }
+            }
+        } else {
+            log::info!("Old bootfs dataset is same as new, skip setting canmount=noauto");
+        }
+    }
+
+    match Command::new("zfs")
+        .args(["set", "canmount=on", dataset])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            log::info!("Set canmount=on for dataset '{}'", dataset);
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::warn!("Failed to set canmount=on for '{}': {}", dataset, stderr.trim());
+        }
+        Err(e) => {
+            log::warn!("Command error when setting canmount=on for '{}': {}", dataset, e);
+        }
+    };
+
+    // 5. 构建并执行 zpool set bootfs 命令
     let bootfs_value = format!("bootfs={}", dataset);
     let output = match Command::new("zpool")
         .args(["set", &bootfs_value, pool_name])
