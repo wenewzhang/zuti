@@ -8,5 +8,6 @@ diesel::table! {
         type_ -> Text,
         password -> Text,
         token -> Nullable<Text>,
+        memo -> Nullable<Text>,
     }
 }
