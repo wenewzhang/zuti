@@ -1556,7 +1556,7 @@ async fn execute_download_task(task_id: String, download_url: String, file_path:
         match resp.chunk().await {
             Ok(Some(chunk)) => {
                 let chunk_len = chunk.len() as u64;
-                log::info!("Received chunk: chunk_len={}", chunk_len);
+                // log::info!("Received chunk: chunk_len={}", chunk_len);
                 if let Err(e) = std::io::Write::write_all(&mut file, &chunk) {
                     log::error!("Failed to write file: {}", e);
                     update_download_task(&task_id, |t| {
@@ -1567,14 +1567,14 @@ async fn execute_download_task(task_id: String, download_url: String, file_path:
                     return;
                 }
                 downloaded += chunk_len;
-                log::info!("downloaded={}", downloaded);
+                // log::info!("downloaded={}", downloaded);
 
                 let progress = if total_bytes > 0 {
                     ((downloaded as f64 / total_bytes as f64) * 100.0) as u8
                 } else {
                     0
                 };
-                log::info!("progress={}", progress);
+                // log::info!("progress={}", progress);
 
                 // Update progress every 1% change to reduce lock contention
                 if progress != last_progress {
