@@ -9,5 +9,6 @@ diesel::table! {
         password -> Text,
         token -> Nullable<Text>,
         memo -> Nullable<Text>,
+        mobile -> Nullable<Text>,
     }
 }

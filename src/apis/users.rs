@@ -110,6 +110,7 @@ pub async fn create_admin_user(pool: web::Data<DbPool>, new_user: web::Json<NewU
         let user_insert = UserInsert {
             name: user_data.name,
             type_: "admin".to_string(),
+            mobile: None,
         };
         
         diesel::insert_into(users)
@@ -319,6 +320,7 @@ pub async fn add_user(
         let user_insert = UserInsert {
             name: username_clone,
             type_: user_type_clone,
+            mobile: None,
         };
         
         diesel::insert_into(users)

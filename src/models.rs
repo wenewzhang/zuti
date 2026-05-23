@@ -12,6 +12,8 @@ pub struct User {
     pub type_: String,
     pub password: String,
     pub token: Option<String>,
+    pub memo: Option<String>,
+    pub mobile: Option<String>,
 }
 
 #[derive(Insertable, Deserialize)]
@@ -19,6 +21,7 @@ pub struct User {
 pub struct UserInsert {
     pub name: String,
     pub type_: String,
+    pub mobile: Option<String>,
 }
 
 #[derive(Deserialize)]
