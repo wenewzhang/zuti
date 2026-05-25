@@ -597,43 +597,31 @@ pub async fn smb_add_user(
         });
     }
 
-    // 5. 检查系统用户是否存在，不存在则创建
-    let output = Command::new("id")
-        .arg(username)
+    // 创建系统用户（无登录权限）
+    let output = Command::new("useradd")
+        .args(["-M", "-s", "/usr/sbin/nologin", username])
         .output();
 
-    let user_exists = match output {
-        Ok(result) => result.status.success(),
-        Err(_) => false,
-    };
-
-    if !user_exists {
-        // 创建系统用户（无登录权限）
-        let output = Command::new("useradd")
-            .args(["-M", "-s", "/usr/sbin/nologin", username])
-            .output();
-
-        match output {
-            Ok(result) => {
-                if !result.status.success() {
-                    let stderr = String::from_utf8_lossy(&result.stderr);
-                    return HttpResponse::InternalServerError().json(SmbAddUserResponse {
-                        success: false,
-                        message: "Failed to create system user".to_string(),
-                        error: Some(format!("{}", stderr)),
-                    });
-                }
-            }
-            Err(e) => {
+    match output {
+        Ok(result) => {
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
                 return HttpResponse::InternalServerError().json(SmbAddUserResponse {
                     success: false,
                     message: "Failed to create system user".to_string(),
-                    error: Some(format!("{}", e)),
+                    error: Some(format!("{}", stderr)),
                 });
             }
         }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(SmbAddUserResponse {
+                success: false,
+                message: "Failed to create system user".to_string(),
+                error: Some(format!("{}", e)),
+            });
+        }
     }
-
+    
     // 6. 添加到 Samba 用户（smbpasswd -a）
     // 使用 echo 呼结合 smbpasswd -a -s 来非交互式添加用户
     let smbpasswd_input = format!("{}\n{}\n", user_password, user_password);
