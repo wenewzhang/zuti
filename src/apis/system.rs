@@ -1718,6 +1718,7 @@ pub async fn get_update_status(
 #[derive(Deserialize)]
 pub struct UpgradeRequest {
     pub file_path: Option<String>,
+    pub fresh_install: Option<bool>,
 }
 
 // upgrade progress 响应结构体
@@ -1814,6 +1815,7 @@ pub async fn upgrade_system(
     let request_json = match serde_json::to_string(&serde_json::json!({
         "action": "upgrade",
         "file": file_path,
+        "fresh_install": body.fresh_install.unwrap_or(false),
     })) {
         Ok(j) => j,
         Err(e) => {
