@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::utils::admin::{verify_admin_access, validate_token_with_db};
-use crate::utils::consts::{FORBID_DIRECTORY, REGISTRY_CONF_BACKUP_PATH, REGISTRY_CONF_PATH, ZUTI_SETTING_FILE};
+use crate::utils::consts::{FORBID_DIRECTORY, PODMAN_CONTAINER_CONFIG_PATH, REGISTRY_CONF_BACKUP_PATH, REGISTRY_CONF_PATH, ZUTI_SETTING_FILE};
 use crate::DbPool;
 
 // ============================================================================
@@ -734,7 +734,7 @@ fn calculate_overall_progress(task: &PullTask) -> u8 {
 // ============================================================================
 
 /// Port mapping configuration
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct PortMapping {
     /// Host port (e.g., "8080")
     pub host_port: String,
@@ -743,7 +743,7 @@ pub struct PortMapping {
 }
 
 /// Volume mount configuration
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct VolumeMount {
     /// Host path (e.g., "/data/myapp")
     pub host_path: String,
@@ -765,7 +765,7 @@ pub struct VolumeMount {
 /// - `volumes`: Optional volume mounts
 /// - `restart_policy`: Optional restart policy ("no", "always", "unless-stopped", "on-failure")
 /// - `auto_start`: Whether to start the container immediately (default: true)
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct CreateContainerRequest {
     /// Docker image name (required)
     pub image: String,
@@ -1039,6 +1039,25 @@ pub async fn create_container(
     match docker.create_container(Some(options), config).await {
         Ok(ContainerCreateResponse { id, warnings }) => {
             let short_id = format_short_id(&id);
+            
+            // Save req_body to config file
+            let config_dir = Path::new(PODMAN_CONTAINER_CONFIG_PATH);
+            if !config_dir.exists() {
+                if let Err(e) = fs::create_dir_all(config_dir) {
+                    eprintln!("Failed to create container config directory {}: {}", PODMAN_CONTAINER_CONFIG_PATH, e);
+                }
+            }
+            let config_path = config_dir.join(format!("{}.json", &short_id));
+            match serde_json::to_string_pretty(&req_body) {
+                Ok(json_str) => {
+                    if let Err(e) = fs::write(&config_path, json_str) {
+                        eprintln!("Failed to write container config to {}: {}", config_path.display(), e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to serialize container config: {}", e);
+                }
+            }
             
             // 8. Auto start container if requested
             if req_body.auto_start {
