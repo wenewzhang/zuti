@@ -2614,7 +2614,7 @@ pub async fn get_container_note(
         });
     }
 
-    let config_path = Path::new(PODMAN_CONTAINER_CONFIG_PATH).join(format!("{}.json", id));
+    let config_path = Path::new(PODMAN_CONTAINER_CONFIG_PATH).join(format!("{}", id));
     if !config_path.exists() {
         return HttpResponse::NotFound().json(ContainerNoteResponse {
             success: false,
@@ -2673,7 +2673,7 @@ pub async fn delete_container_note(
         });
     }
 
-    let config_path = Path::new(PODMAN_CONTAINER_CONFIG_PATH).join(format!("{}.json", id));
+    let config_path = Path::new(PODMAN_CONTAINER_CONFIG_PATH).join(format!("{}", id));
     if !config_path.exists() {
         return HttpResponse::NotFound().json(DeleteContainerNoteResponse {
             success: false,
