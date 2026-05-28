@@ -2198,9 +2198,22 @@ pub async fn docker_container_log(
         });
     }
 
-    // 3. Parse logs
+    // 3. Parse logs (merge stdout and stderr, as container logs may go to either)
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let all_lines: Vec<String> = stdout.lines().map(|s| s.to_string()).collect();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    let mut all_lines: Vec<String> = stdout.lines().map(|s| s.to_string()).collect();
+    if all_lines.is_empty() && !stderr.is_empty() {
+        // If stdout is empty but stderr has content, use stderr
+        // (many containers write logs to stderr)
+        all_lines = stderr.lines().map(|s| s.to_string()).collect();
+    } else if !stderr.is_empty() {
+        // If both have content, append stderr lines after stdout lines
+        for line in stderr.lines() {
+            all_lines.push(line.to_string());
+        }
+    }
+
     let total_lines = all_lines.len();
 
     // 4. Pagination
