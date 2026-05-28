@@ -2504,3 +2504,196 @@ pub async fn docker_remove_container(
         }),
     }
 }
+
+// ============================================================================
+// Container Note (JSON Config File) Management
+// ============================================================================
+
+/// Container note entry
+#[derive(Serialize, Debug)]
+pub struct ContainerNote {
+    pub id: String,
+    pub content: serde_json::Value,
+}
+
+/// List container notes response
+#[derive(Serialize)]
+pub struct ListContainerNotesResponse {
+    pub success: bool,
+    pub message: String,
+    pub notes: Vec<ContainerNote>,
+}
+
+/// Single container note response
+#[derive(Serialize)]
+pub struct ContainerNoteResponse {
+    pub success: bool,
+    pub message: String,
+    pub note: Option<ContainerNote>,
+}
+
+/// Delete container note response
+#[derive(Serialize)]
+pub struct DeleteContainerNoteResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+/// List all container JSON config files
+///
+/// # Endpoint
+/// GET /docker/note
+#[get("/docker/note")]
+pub async fn list_container_notes(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+) -> impl Responder {
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
+    let config_dir = Path::new(PODMAN_CONTAINER_CONFIG_PATH);
+    if !config_dir.exists() {
+        return HttpResponse::Ok().json(ListContainerNotesResponse {
+            success: true,
+            message: "Config directory does not exist".to_string(),
+            notes: vec![],
+        });
+    }
+
+    let mut notes = Vec::new();
+    match fs::read_dir(config_dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        let id = stem.to_string();
+                        let content = match fs::read_to_string(&path) {
+                            Ok(data) => {
+                                serde_json::from_str(&data).unwrap_or_else(|_| serde_json::Value::Null)
+                            }
+                            Err(_) => serde_json::Value::Null,
+                        };
+                        notes.push(ContainerNote { id, content });
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ListContainerNotesResponse {
+                success: false,
+                message: format!("Failed to read config directory: {}", e),
+                notes: vec![],
+            });
+        }
+    }
+
+    HttpResponse::Ok().json(ListContainerNotesResponse {
+        success: true,
+        message: format!("Found {} note(s)", notes.len()),
+        notes,
+    })
+}
+
+/// Get a single container JSON config file
+///
+/// # Endpoint
+/// GET /docker/note/{id}
+#[get("/docker/note/{id}")]
+pub async fn get_container_note(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    path: web::Path<String>,
+) -> impl Responder {
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
+    let id = path.into_inner().trim().to_string();
+    if id.is_empty() {
+        return HttpResponse::BadRequest().json(ContainerNoteResponse {
+            success: false,
+            message: "Note ID is required".to_string(),
+            note: None,
+        });
+    }
+
+    let config_path = Path::new(PODMAN_CONTAINER_CONFIG_PATH).join(format!("{}.json", id));
+    if !config_path.exists() {
+        return HttpResponse::NotFound().json(ContainerNoteResponse {
+            success: false,
+            message: format!("Note '{}' not found", id),
+            note: None,
+        });
+    }
+
+    let content = match fs::read_to_string(&config_path) {
+        Ok(data) => match serde_json::from_str(&data) {
+            Ok(val) => val,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(ContainerNoteResponse {
+                    success: false,
+                    message: format!("Failed to parse note JSON: {}", e),
+                    note: None,
+                });
+            }
+        },
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ContainerNoteResponse {
+                success: false,
+                message: format!("Failed to read note file: {}", e),
+                note: None,
+            });
+        }
+    };
+
+    HttpResponse::Ok().json(ContainerNoteResponse {
+        success: true,
+        message: format!("Note '{}' retrieved successfully", id),
+        note: Some(ContainerNote { id, content }),
+    })
+}
+
+/// Delete a container JSON config file
+///
+/// # Endpoint
+/// DELETE /docker/note/{id}
+#[delete("/docker/note/{id}")]
+pub async fn delete_container_note(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    path: web::Path<String>,
+) -> impl Responder {
+    let _admin_username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let id = path.into_inner().trim().to_string();
+    if id.is_empty() {
+        return HttpResponse::BadRequest().json(DeleteContainerNoteResponse {
+            success: false,
+            message: "Note ID is required".to_string(),
+        });
+    }
+
+    let config_path = Path::new(PODMAN_CONTAINER_CONFIG_PATH).join(format!("{}.json", id));
+    if !config_path.exists() {
+        return HttpResponse::NotFound().json(DeleteContainerNoteResponse {
+            success: false,
+            message: format!("Note '{}' not found", id),
+        });
+    }
+
+    match fs::remove_file(&config_path) {
+        Ok(_) => HttpResponse::Ok().json(DeleteContainerNoteResponse {
+            success: true,
+            message: format!("Note '{}' deleted successfully", id),
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(DeleteContainerNoteResponse {
+            success: false,
+            message: format!("Failed to delete note '{}': {}", id, e),
+        }),
+    }
+}
