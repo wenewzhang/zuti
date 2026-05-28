@@ -2071,6 +2071,179 @@ pub async fn delete_volume(
 }
 
 // ============================================================================
+// Container Log Operations
+// ============================================================================
+
+/// Container log query parameters
+#[derive(Deserialize, Debug)]
+pub struct ContainerLogQuery {
+    /// Page number (1-based)
+    #[serde(default = "default_log_page")]
+    pub page: usize,
+    /// Lines per page
+    #[serde(default = "default_log_page_size")]
+    pub page_size: usize,
+    /// If provided, only return last N lines (overrides pagination)
+    #[serde(default)]
+    pub tail: Option<usize>,
+}
+
+fn default_log_page() -> usize {
+    1
+}
+
+fn default_log_page_size() -> usize {
+    100
+}
+
+/// Container log response
+#[derive(Serialize)]
+pub struct ContainerLogResponse {
+    pub success: bool,
+    pub message: String,
+    pub container_id: String,
+    pub logs: Vec<String>,
+    pub total_lines: usize,
+    pub page: usize,
+    pub page_size: usize,
+    pub total_pages: usize,
+}
+
+/// Get container logs via podman logs with pagination
+///
+/// # Endpoint
+/// GET /docker/log/{container_id}
+///
+/// # Query Parameters
+/// - `page`: Page number (1-based, default: 1)
+/// - `page_size`: Lines per page (default: 100)
+/// - `tail`: If provided, return only the last N lines (ignores page/page_size)
+///
+/// # Response
+/// ```json
+/// {
+///     "success": true,
+///     "message": "Retrieved 50 lines, showing page 1",
+///     "container_id": "8374cd91f06e",
+///     "logs": ["line1", "line2"],
+///     "total_lines": 50,
+///     "page": 1,
+///     "page_size": 100,
+///     "total_pages": 1
+/// }
+/// ```
+#[get("/docker/log/{container_id}")]
+pub async fn docker_container_log(
+    req: HttpRequest,
+    pool: web::Data<DbPool>,
+    path: web::Path<String>,
+    query: web::Query<ContainerLogQuery>,
+) -> impl Responder {
+    // 1. Verify access
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
+    let container_id = path.into_inner().trim().to_string();
+    if container_id.is_empty() {
+        return HttpResponse::BadRequest().json(ContainerLogResponse {
+            success: false,
+            message: "Container ID is required".to_string(),
+            container_id: String::new(),
+            logs: vec![],
+            total_lines: 0,
+            page: 1,
+            page_size: query.page_size,
+            total_pages: 0,
+        });
+    }
+
+    // 2. Build podman logs command
+    let mut cmd = Command::new("podman");
+    cmd.arg("logs");
+
+    if let Some(tail) = query.tail {
+        cmd.arg("--tail").arg(tail.to_string());
+    }
+
+    cmd.arg(&container_id);
+
+    let output = match cmd.output() {
+        Ok(output) => output,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ContainerLogResponse {
+                success: false,
+                message: format!("Failed to execute podman logs: {}", e),
+                container_id,
+                logs: vec![],
+                total_lines: 0,
+                page: 1,
+                page_size: query.page_size,
+                total_pages: 0,
+            });
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return HttpResponse::InternalServerError().json(ContainerLogResponse {
+            success: false,
+            message: format!("podman logs failed: {}", stderr),
+            container_id,
+            logs: vec![],
+            total_lines: 0,
+            page: 1,
+            page_size: query.page_size,
+            total_pages: 0,
+        });
+    }
+
+    // 3. Parse logs
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let all_lines: Vec<String> = stdout.lines().map(|s| s.to_string()).collect();
+    let total_lines = all_lines.len();
+
+    // 4. Pagination
+    let page_size = query.page_size.max(1);
+    let page = query.page.max(1);
+    let total_pages = if total_lines == 0 {
+        1
+    } else {
+        ((total_lines + page_size - 1) / page_size).max(1)
+    };
+
+    let logs = if let Some(tail) = query.tail {
+        // tail mode: return all fetched lines
+        all_lines
+    } else {
+        let start = (page - 1) * page_size;
+        if start >= total_lines {
+            vec![]
+        } else {
+            let end = (start + page_size).min(total_lines);
+            all_lines[start..end].to_vec()
+        }
+    };
+
+    let current_page = if query.tail.is_some() { 1 } else { page };
+    let current_total_pages = if query.tail.is_some() { 1 } else { total_pages };
+
+    HttpResponse::Ok().json(ContainerLogResponse {
+        success: true,
+        message: format!(
+            "Retrieved {} lines, showing page {} of {}",
+            total_lines, current_page, current_total_pages
+        ),
+        container_id,
+        logs,
+        total_lines,
+        page: current_page,
+        page_size: query.page_size,
+        total_pages: current_total_pages,
+    })
+}
+
+// ============================================================================
 // Container Lifecycle Operations
 // ============================================================================
 

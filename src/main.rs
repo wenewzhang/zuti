@@ -255,6 +255,7 @@ async fn main() -> std::io::Result<()> {
             .service(apis::docker::docker_stop_container)
             .service(apis::docker::docker_restart_container)
             .service(apis::docker::docker_remove_container)
+            .service(apis::docker::docker_container_log)
             .service(apis::docker_compose::compose_up)
             .service(apis::docker_compose::compose_list)
             .service(apis::docker_compose::compose_down)
