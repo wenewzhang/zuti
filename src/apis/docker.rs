@@ -2521,7 +2521,7 @@ pub struct ContainerNote {
 pub struct ListContainerNotesResponse {
     pub success: bool,
     pub message: String,
-    pub notes: Vec<ContainerNote>,
+    pub notes: Vec<String>,
 }
 
 /// Single container note response
@@ -2566,16 +2566,9 @@ pub async fn list_container_notes(
         Ok(entries) => {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        let id = stem.to_string();
-                        let content = match fs::read_to_string(&path) {
-                            Ok(data) => {
-                                serde_json::from_str(&data).unwrap_or_else(|_| serde_json::Value::Null)
-                            }
-                            Err(_) => serde_json::Value::Null,
-                        };
-                        notes.push(ContainerNote { id, content });
+                if path.is_file() {
+                    if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                        notes.push(name.to_string());
                     }
                 }
             }
@@ -2588,6 +2581,8 @@ pub async fn list_container_notes(
             });
         }
     }
+
+    notes.sort();
 
     HttpResponse::Ok().json(ListContainerNotesResponse {
         success: true,
