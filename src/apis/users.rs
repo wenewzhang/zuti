@@ -41,6 +41,7 @@ pub struct CreateUserResponse {
 #[derive(Serialize)]
 pub struct HasAdminResponse {
     pub has_admin: bool,
+    pub version: String,
 }
 
 // 检查是否存在 admin 用户
@@ -65,9 +66,20 @@ pub async fn has_admin(pool: web::Data<DbPool>) -> impl Responder {
     .await
     .unwrap();
     
+    let version = std::fs::read_to_string("/.data/.version")
+        .unwrap_or_else(|_| "Unknown".to_string())
+        .trim()
+        .to_string();
+
     match result {
-        Ok(admin_exists) => HttpResponse::Ok().json(HasAdminResponse { has_admin: admin_exists }),
-        Err(_e) => HttpResponse::InternalServerError().json(HasAdminResponse { has_admin: false }),
+        Ok(admin_exists) => HttpResponse::Ok().json(HasAdminResponse {
+            has_admin: admin_exists,
+            version,
+        }),
+        Err(_e) => HttpResponse::InternalServerError().json(HasAdminResponse {
+            has_admin: false,
+            version,
+        }),
     }
 }
 
