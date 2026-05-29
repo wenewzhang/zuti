@@ -3,6 +3,7 @@ pub mod container;
 pub mod disks;
 pub mod docker;
 pub mod docker_compose;
+pub mod loger;
 pub mod samba;
 pub mod system;
 pub mod users;
