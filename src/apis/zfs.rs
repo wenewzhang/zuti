@@ -1101,50 +1101,6 @@ pub async fn   import_pool(
             }
         }
     }
-    if let Some(ref dir) = import_req.mount_point {
-        if !dir.is_empty() {
-            // 设置 mountpoint
-            let mountpoint_result = Command::new("zfs")
-                .args(["set", &format!("mountpoint={}", dir), poolname])
-                .output();
-            
-            if let Err(e) = mountpoint_result {
-                return HttpResponse::InternalServerError().json(ImportPoolResponse {
-                    success: false,
-                    message: format!("Pool '{}' imported but failed to set mountpoint", poolname),
-                    error: Some(format!("Failed to set mountpoint: {}", e)),
-                });
-            }
-        }
-    }
-    // 如果 boot_enabled 为 true，设置 canmount=on
-    if import_req.boot_enabled == Some(true) {
-                    // 设置 canmount=on
-        let canmount_result = Command::new("zfs")
-            .args(["set", "canmount=on", poolname])
-            .output();
-        
-        if let Err(e) = canmount_result {
-            return HttpResponse::InternalServerError().json(ImportPoolResponse {
-                success: false,
-                message: format!("Pool '{}' imported but failed to set canmount", poolname),
-                error: Some(format!("Failed to set canmount: {}", e)),
-            });
-        }
-    } else {
-        // mount_on_startup 不为真时，设置 canmount=noauto
-        let canmount_result = Command::new("zfs")
-            .args(["set", "canmount=noauto", poolname])
-            .output();
-        
-        if let Err(e) = canmount_result {
-            return HttpResponse::InternalServerError().json(ImportPoolResponse {
-                success: false,
-                message: format!("Pool '{}' imported but failed to set canmount=off", poolname),
-                error: Some(format!("Failed to set canmount=off: {}", e)),
-            });
-        }
-    }
 
     // 通过 zuti-helper 执行导入池操作
     let mut stream = match UnixStream::connect(ZUTI_HELPER_SOCK) {
@@ -1162,6 +1118,7 @@ pub async fn   import_pool(
         "action": "import_pool",
         "pool_name": poolname,
         "mount_point": import_req.mount_point,
+        "boot_enabled": import_req.boot_enabled,
     })) {
         Ok(j) => j,
         Err(e) => {
