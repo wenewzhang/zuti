@@ -95,3 +95,5 @@ pub const REGISTRY_CONF_BACKUP_PATH: &str = "/etc/containers/registries.conf.bak
 /// zuti-helper Unix Domain Socket 路径
 pub const ZUTI_HELPER_SOCK: &str = "/run/zuti-helper.sock";
 pub const PODMAN_CONTAINER_CONFIG_PATH: &str = "/.data/zuti/podman/container/";
+
+pub const ENV_PATH: &str = "/etc/zuti/.env";

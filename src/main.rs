@@ -97,7 +97,7 @@ async fn main() -> std::io::Result<()> {
         }
     }
     
-    let env_path = Path::new("/etc/zuti/.env");
+    let env_path = Path::new(utils::consts::ENV_PATH);
     if env_path.exists() {
         log::info!("Loading env from: {}", env_path.display());
         from_path(env_path).ok();
