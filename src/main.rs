@@ -307,6 +307,8 @@ async fn main() -> std::io::Result<()> {
             .service(apis::system::get_update_status)
             .service(apis::system::upgrade_system)
             .service(apis::system::get_upgrade_progress)
+            .service(apis::system::get_upgrade_mirror)
+            .service(apis::system::set_upgrade_mirror)
             .service(apis::zfs::get_pool_advanced_setting)
             .service(apis::zfs::set_pool_advanced_setting)
             .service(apis::zfs::get_pool_devices_handler)

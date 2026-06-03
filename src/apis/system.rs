@@ -9,7 +9,7 @@ use std::os::unix::net::UnixStream;
 use std::io::{BufRead, BufReader, Write};
 
 use crate::utils::admin::verify_admin_access;
-use crate::utils::consts::ZUTI_HELPER_SOCK;
+use crate::utils::consts::{ENV_PATH, ZUTI_HELPER_SOCK};
 
 const RECOMMENDED_APPS_CACHE_TTL_SECONDS: u64 = 3600;
 const EXTRA_SPACE_BYTES: u64 = 1 * 1024 * 1024 * 1024;
@@ -1972,4 +1972,168 @@ pub async fn get_upgrade_progress(
             error: Some(error.to_string()),
         })
     }
+}
+
+// ============================================================================
+// Upgrade Mirror Settings
+// ============================================================================
+
+/// Response for upgrade mirror settings
+#[derive(Serialize)]
+pub struct UpgradeMirrorResponse {
+    pub success: bool,
+    pub update_url: String,
+    pub channel: String,
+    pub error: Option<String>,
+}
+
+/// Request for updating upgrade mirror settings
+#[derive(Deserialize)]
+pub struct UpgradeMirrorRequest {
+    pub update_url: String,
+    pub channel: String,
+}
+
+/// Response for updating upgrade mirror settings
+#[derive(Serialize)]
+pub struct UpgradeMirrorUpdateResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+fn read_env_value(content: &str, key: &str) -> Option<String> {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(pos) = trimmed.find('=') {
+            let k = trimmed[..pos].trim();
+            if k == key {
+                return Some(trimmed[pos + 1..].trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+fn write_env_values(path: &str, values: &[(&str, &str)]) -> Result<(), String> {
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let mut updated = std::collections::HashMap::new();
+
+    for line in &mut lines {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
+        if let Some(pos) = trimmed.find('=') {
+            let k = trimmed[..pos].trim();
+            for (key, val) in values {
+                if k == *key {
+                    *line = format!("{}={}", key, val);
+                    updated.insert(*key, true);
+                    break;
+                }
+            }
+        }
+    }
+
+    for (key, val) in values {
+        if !updated.contains_key(*key) {
+            lines.push(format!("{}={}", key, val));
+        }
+    }
+
+    std::fs::write(path, lines.join("\n") + "\n")
+        .map_err(|e| format!("Failed to write env file: {}", e))?;
+
+    Ok(())
+}
+
+/// system/upgrade/mirror API - 获取升级镜像地址和通道（需要 JWT 认证）
+#[get("/system/upgrade/mirror")]
+pub async fn get_upgrade_mirror(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+) -> impl Responder {
+    let _claims = match crate::utils::admin::validate_token_with_db(&req, &pool).await {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    let content = match std::fs::read_to_string(ENV_PATH) {
+        Ok(c) => c,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(UpgradeMirrorResponse {
+                success: false,
+                update_url: String::new(),
+                channel: String::new(),
+                error: Some(format!("Failed to read env file: {}", e)),
+            });
+        }
+    };
+
+    let update_url = read_env_value(&content, "UPDATE_URL").unwrap_or_default();
+    let channel = read_env_value(&content, "CHANNEL").unwrap_or_default();
+
+    HttpResponse::Ok().json(UpgradeMirrorResponse {
+        success: true,
+        update_url,
+        channel,
+        error: None,
+    })
+}
+
+/// system/upgrade/mirror API - 设置升级镜像地址和通道（需要 JWT 认证，仅管理员可用）
+#[post("/system/upgrade/mirror")]
+pub async fn set_upgrade_mirror(
+    req: HttpRequest,
+    pool: web::Data<crate::DbPool>,
+    body: web::Json<UpgradeMirrorRequest>,
+) -> impl Responder {
+    let _username = match verify_admin_access(&req, &pool).await {
+        Ok(username) => username,
+        Err(response) => return response,
+    };
+
+    let update_url = body.update_url.trim();
+    let channel = body.channel.trim();
+
+    if update_url.is_empty() {
+        return HttpResponse::BadRequest().json(UpgradeMirrorUpdateResponse {
+            success: false,
+            message: "UPDATE_URL cannot be empty".to_string(),
+            error: Some("update_url is required".to_string()),
+        });
+    }
+
+    if channel.is_empty() {
+        return HttpResponse::BadRequest().json(UpgradeMirrorUpdateResponse {
+            success: false,
+            message: "CHANNEL cannot be empty".to_string(),
+            error: Some("channel is required".to_string()),
+        });
+    }
+
+    if let Err(e) = write_env_values(ENV_PATH, &[("UPDATE_URL", update_url), ("CHANNEL", channel)]) {
+        return HttpResponse::InternalServerError().json(UpgradeMirrorUpdateResponse {
+            success: false,
+            message: "Failed to write env file".to_string(),
+            error: Some(e),
+        });
+    }
+
+    // 同时更新当前进程的环境变量，使修改立即生效
+    unsafe {
+        std::env::set_var("UPDATE_URL", update_url);
+        std::env::set_var("CHANNEL", channel);
+    }
+
+    HttpResponse::Ok().json(UpgradeMirrorUpdateResponse {
+        success: true,
+        message: "Upgrade mirror settings updated".to_string(),
+        error: None,
+    })
 }
