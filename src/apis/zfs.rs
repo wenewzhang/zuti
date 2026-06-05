@@ -2574,137 +2574,82 @@ pub async fn update_zfs_share(
         }
     }
 
-    let is_all_readonly = body.permission == "readonly" && body.guest_permission == "readonly";
-
-    if is_all_readonly {
-        // 直接设置 dataset readonly=on
-        let output = match Command::new("zfs")
-            .args(["set", "readonly=on", dataset])
-            .output()
-        {
-            Ok(output) => output,
-            Err(e) => {
-                return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
-                    success: false,
-                    data: None,
-                    error: Some(format!(
-                        "Failed to set readonly=on for dataset '{}': {}",
-                        dataset, e
-                    )),
-                });
-            }
-        };
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+    // 通过 zuti-helper 执行更新 ZFS share 操作
+    let mut stream = match UnixStream::connect(ZUTI_HELPER_SOCK) {
+        Ok(s) => s,
+        Err(e) => {
             return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
                 success: false,
                 data: None,
-                error: Some(format!(
-                    "Failed to set readonly=on for dataset '{}': {}",
-                    dataset, stderr
-                )),
+                error: Some(format!("Failed to connect to zuti-helper: {}", e)),
             });
         }
-    } else {
-        // 先确保 readonly=off
-        let output = match Command::new("zfs")
-            .args(["set", "readonly=off", dataset])
-            .output()
-        {
-            Ok(output) => output,
-            Err(e) => {
-                return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
-                    success: false,
-                    data: None,
-                    error: Some(format!(
-                        "Failed to set readonly=off for dataset '{}': {}",
-                        dataset, e
-                    )),
-                });
-            }
-        };
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+    };
+
+    let request_json = match serde_json::to_string(&serde_json::json!({
+        "action": "update_zfs_share",
+        "dataset": dataset,
+        "directory": directory,
+        "owner": body.owner,
+        "permission": body.permission,
+        "guest_permission": body.guest_permission,
+    })) {
+        Ok(j) => j,
+        Err(e) => {
             return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
                 success: false,
                 data: None,
-                error: Some(format!(
-                    "Failed to set readonly=off for dataset '{}': {}",
-                    dataset, stderr
-                )),
+                error: Some(format!("Failed to serialize request: {}", e)),
             });
         }
+    };
 
-        // 修改 mountpoint 的 owner
-        let output = match Command::new("chown")
-            .args(["-R", &format!("{}:{}", body.owner, body.owner), &directory])
-            .output()
-        {
-            Ok(output) => output,
-            Err(e) => {
-                return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
-                    success: false,
-                    data: None,
-                    error: Some(format!(
-                        "Failed to chown for directory '{}': {}",
-                        directory, e
-                    )),
-                });
-            }
-        };
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+    if let Err(e) = writeln!(stream, "{}", request_json) {
+        return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+            success: false,
+            data: None,
+            error: Some(format!("Failed to send request to zuti-helper: {}", e)),
+        });
+    }
+
+    let reader = BufReader::new(&stream);
+    let response_line = match reader.lines().next() {
+        Some(Ok(line)) => line,
+        Some(Err(e)) => {
             return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
                 success: false,
                 data: None,
-                error: Some(format!(
-                    "Failed to chown for directory '{}': {}",
-                    directory, stderr
-                )),
+                error: Some(format!("Failed to read response from zuti-helper: {}", e)),
             });
         }
-
-        // 修改 mountpoint 的权限
-        let owner_mod = if body.permission == "readonly" { "u-w" } else { "u+w" };
-        let group_mod = match body.guest_permission.as_str() {
-                                    "readonly" => "g-w+r+x",   
-                                    "none"     => "g=",    
-                                    _          => "g+w+r+x",   
-                            };
-        let guest_mod = match body.guest_permission.as_str() {
-                                    "readonly" => "o-w+r+x",   
-                                    "none"     => "o=",    
-                                    _          => "o+w+r+x",   
-                            };
-        let chmod_arg = format!("{},{},{}", owner_mod, group_mod, guest_mod);
-
-        let output = match Command::new("chmod")
-            .args(["-R", &chmod_arg, &directory])
-            .output()
-        {
-            Ok(output) => output,
-            Err(e) => {
-                return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
-                    success: false,
-                    data: None,
-                    error: Some(format!(
-                        "Failed to chmod for directory '{}': {}",
-                        directory, e
-                    )),
-                });
-            }
-        };
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        None => {
             return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
                 success: false,
                 data: None,
-                error: Some(format!(
-                    "Failed to chmod for directory '{}': {}",
-                    directory, stderr
-                )),
+                error: Some("No response from zuti-helper".to_string()),
             });
         }
+    };
+
+    let helper_resp: serde_json::Value = match serde_json::from_str(&response_line) {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Invalid response from zuti-helper: {}", e)),
+            });
+        }
+    };
+
+    let success = helper_resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !success {
+        let error = helper_resp.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error from zuti-helper");
+        return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+            success: false,
+            data: None,
+            error: Some(error.to_string()),
+        });
     }
 
     HttpResponse::Ok().json(ZfsShareInfoResponse {
