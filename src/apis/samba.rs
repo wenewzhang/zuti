@@ -1313,122 +1313,107 @@ pub async fn list_zfs_shares(
         Err(response) => return response,
     };
 
-    // 2. 执行 zfs get 命令获取所有 dataset 的 sharesmb 属性
-    let output = Command::new("zfs")
-        .args([
-            "get",
-            "-H",
-            "-o", "name,value",
-            "sharesmb",
-        ])
-        .output();
-
-    let shares = match output {
-        Ok(result) => {
-            if !result.status.success() {
-                let stderr = String::from_utf8_lossy(&result.stderr);
-                return HttpResponse::InternalServerError().json(ListZfsSmbSharesResponse {
-                    success: false,
-                    shares: vec![],
-                    message: "Failed to list ZFS shares".to_string(),
-                    error: Some(format!("{}", stderr)),
-                });
-            }
-
-            // 解析输出，格式: dataset_name\ton
-            // 只保留 value 为 "on" 的 dataset
-            let stdout = String::from_utf8_lossy(&result.stdout);
-            let mut share_list = Vec::new();
-
-            for line in stdout.lines() {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2 && parts[1] == "on" {
-                    let dataset = parts[0].to_string();
-
-                    // 获取 dataset 的 mountpoint
-                    let mountpoint_output = Command::new("zfs")
-                        .args(["get", "-H", "-o", "value", "mountpoint", &dataset])
-                        .output();
-
-                    let (owner, permission, guest_permission) = match mountpoint_output {
-                        Ok(mp_result) if mp_result.status.success() => {
-                            let mountpoint = String::from_utf8_lossy(&mp_result.stdout).trim().to_string();
-                            let path = std::path::Path::new(&mountpoint);
-                            if path.exists() && path.is_dir() {
-                                match std::fs::metadata(path) {
-                                    Ok(metadata) => {
-                                        use std::os::unix::fs::MetadataExt;
-                                        let uid = metadata.uid();
-                                        let mode = metadata.mode();
-                                        let owner_name = Command::new("id")
-                                            .args(["-nu", &uid.to_string()])
-                                            .output()
-                                            .ok()
-                                            .and_then(|out| {
-                                                if out.status.success() {
-                                                    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
-                                                } else {
-                                                    None
-                                                }
-                                            })
-                                            .unwrap_or_else(|| uid.to_string());
-
-                                        // 获取 readonly 属性
-                                        let readonly = Command::new("zfs")
-                                            .args(["get", "-H", "-o", "value", "readonly", &dataset])
-                                            .output()
-                                            .ok()
-                                            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string() == "on")
-                                            .unwrap_or(false);
-
-                                        let owner_perm = if readonly {
-                                            "readonly".to_string()
-                                        } else if mode & 0o200 != 0 {
-                                            "write".to_string()
-                                        } else {
-                                            "readonly".to_string()
-                                        };
-
-                                        let guest_perm = if readonly {
-                                            "readonly".to_string()
-                                        } else if mode & 0o002 != 0 {
-                                            "write".to_string()
-                                        } else if mode & 0o004 != 0 {
-                                            "readonly".to_string()
-                                        } else {
-                                            "none".to_string()
-                                        };
-
-                                        (owner_name, owner_perm, guest_perm)
-                                    }
-                                    Err(_) => ("unknown".to_string(), "readonly".to_string(), "readonly".to_string()),
-                                }
-                            } else {
-                                ("unknown".to_string(), "readonly".to_string(), "readonly".to_string())
-                            }
-                        }
-                        _ => ("unknown".to_string(), "readonly".to_string(), "readonly".to_string()),
-                    };
-
-                    share_list.push(ZfsSmbShareInfo {
-                        dataset,
-                        owner,
-                        permission,
-                        guest_permission,
-                    });
-                }
-            }
-
-            share_list
-        }
+    // 2. 通过 zuti-helper 获取 ZFS SMB 共享列表
+    let mut stream = match UnixStream::connect(ZUTI_HELPER_SOCK) {
+        Ok(s) => s,
         Err(e) => {
             return HttpResponse::InternalServerError().json(ListZfsSmbSharesResponse {
                 success: false,
                 shares: vec![],
-                message: "Failed to execute zfs get command".to_string(),
-                error: Some(format!("{}", e)),
+                message: "Failed to connect to zuti-helper".to_string(),
+                error: Some(format!("Unix socket error: {}", e)),
             });
         }
+    };
+
+    let request_json = match serde_json::to_string(&serde_json::json!({
+        "action": "list_zfs_shares",
+    })) {
+        Ok(j) => j,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ListZfsSmbSharesResponse {
+                success: false,
+                shares: vec![],
+                message: "Failed to serialize request".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    if let Err(e) = writeln!(stream, "{}", request_json) {
+        return HttpResponse::InternalServerError().json(ListZfsSmbSharesResponse {
+            success: false,
+            shares: vec![],
+            message: "Failed to send request to zuti-helper".to_string(),
+            error: Some(e.to_string()),
+        });
+    }
+
+    let reader = BufReader::new(&stream);
+    let response_line = match reader.lines().next() {
+        Some(Ok(line)) => line,
+        Some(Err(e)) => {
+            return HttpResponse::InternalServerError().json(ListZfsSmbSharesResponse {
+                success: false,
+                shares: vec![],
+                message: "Failed to read response from zuti-helper".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+        None => {
+            return HttpResponse::InternalServerError().json(ListZfsSmbSharesResponse {
+                success: false,
+                shares: vec![],
+                message: "No response from zuti-helper".to_string(),
+                error: None,
+            });
+        }
+    };
+
+    let helper_resp: serde_json::Value = match serde_json::from_str(&response_line) {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ListZfsSmbSharesResponse {
+                success: false,
+                shares: vec![],
+                message: "Invalid response from zuti-helper".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    let success = helper_resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !success {
+        let error = helper_resp.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error from zuti-helper");
+        return HttpResponse::InternalServerError().json(ListZfsSmbSharesResponse {
+            success: false,
+            shares: vec![],
+            message: "Failed to list ZFS shares via zuti-helper".to_string(),
+            error: Some(error.to_string()),
+        });
+    }
+
+    let shares = match helper_resp.get("data").and_then(|d| d.get("shares")) {
+        Some(shares_val) => {
+            match shares_val.as_array() {
+                Some(arr) => {
+                    arr.iter().filter_map(|v| {
+                        let dataset = v.get("dataset")?.as_str()?.to_string();
+                        let owner = v.get("owner")?.as_str()?.to_string();
+                        let permission = v.get("permission")?.as_str()?.to_string();
+                        let guest_permission = v.get("guest_permission")?.as_str()?.to_string();
+                        Some(ZfsSmbShareInfo {
+                            dataset,
+                            owner,
+                            permission,
+                            guest_permission,
+                        })
+                    }).collect()
+                }
+                None => vec![],
+            }
+        }
+        None => vec![],
     };
 
     HttpResponse::Ok().json(ListZfsSmbSharesResponse {
