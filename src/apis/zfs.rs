@@ -2319,56 +2319,6 @@ pub struct ZfsShareInfoResponse {
     pub error: Option<String>,
 }
 
-/// 通过 uid 获取用户名
-fn get_username_by_uid(uid: u32) -> Option<String> {
-    Command::new("id")
-        .args(["-nu", &uid.to_string()])
-        .output()
-        .ok()
-        .and_then(|output| {
-            if output.status.success() {
-                Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-            } else {
-                None
-            }
-        })
-}
-
-/// 通过目录路径查找对应的 ZFS dataset
-fn get_dataset_by_mountpoint(mountpoint: &str) -> Option<String> {
-    let output = Command::new("zfs")
-        .args(["list", "-H", "-o", "name,mountpoint"])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() >= 2 && parts[1] == mountpoint {
-            return Some(parts[0].to_string());
-        }
-    }
-    None
-}
-
-/// 获取 ZFS dataset 的 readonly 属性
-fn get_dataset_readonly(dataset: &str) -> Option<String> {
-    let output = Command::new("zfs")
-        .args(["get", "-H", "-o", "value", "readonly", dataset])
-        .output()
-        .ok()?;
-
-    if output.status.success() {
-        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        None
-    }
-}
-
 /// zfs/share_info API - 获取指定目录的共享信息（需要 JWT 认证）
 #[get("/zfs/zfs_share_info")]
 pub async fn zfs_share_info(
@@ -2433,75 +2383,99 @@ pub async fn zfs_share_info(
         }
     }
 
-    // 获取目录的 metadata
-    let metadata = match std::fs::metadata(path) {
-        Ok(m) => m,
+    // 通过 zuti-helper 获取 ZFS share 信息
+    let mut stream = match UnixStream::connect(ZUTI_HELPER_SOCK) {
+        Ok(s) => s,
         Err(e) => {
             return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
                 success: false,
                 data: None,
-                error: Some(format!("Failed to get directory metadata: {}", e)),
+                error: Some(format!("Failed to connect to zuti-helper: {}", e)),
             });
         }
     };
 
-    use std::os::unix::fs::MetadataExt;
-    let uid = metadata.uid();
-    let mode = metadata.mode();
-
-    // 获取用户名
-    let owner = get_username_by_uid(uid).unwrap_or_else(|| uid.to_string());
-
-    // 查找对应的 ZFS dataset 并获取 readonly 和 quota 属性
-    let (zfs_readonly, quota) = match get_dataset_by_mountpoint(&directory) {
-        Some(ds) => {
-            let readonly = get_dataset_readonly(&ds)
-                .map(|v| v == "on")
-                .unwrap_or(false);
-            let quota_val = Command::new("zfs")
-                .args(["get", "-H", "-o", "value", "quota", &ds])
-                .output()
-                .ok()
-                .and_then(|out| {
-                    if out.status.success() {
-                        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| "none".to_string());
-            (readonly, quota_val)
+    let request_json = match serde_json::to_string(&serde_json::json!({
+        "action": "zfs_share_info",
+        "dataset": dataset,
+    })) {
+        Ok(j) => j,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to serialize request: {}", e)),
+            });
         }
-        None => (false, "none".to_string()),
     };
 
-    // 判断权限
-    let owner_permission = if zfs_readonly {
-        "readonly".to_string()
-    } else if mode & 0o200 != 0 {
-        "write".to_string()
-    } else {
-        "readonly".to_string()
+    if let Err(e) = writeln!(stream, "{}", request_json) {
+        return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+            success: false,
+            data: None,
+            error: Some(format!("Failed to send request to zuti-helper: {}", e)),
+        });
+    }
+
+    let reader = BufReader::new(&stream);
+    let response_line = match reader.lines().next() {
+        Some(Ok(line)) => line,
+        Some(Err(e)) => {
+            return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Failed to read response from zuti-helper: {}", e)),
+            });
+        }
+        None => {
+            return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+                success: false,
+                data: None,
+                error: Some("No response from zuti-helper".to_string()),
+            });
+        }
     };
 
-    let guest_permission = if zfs_readonly {
-        "readonly".to_string()
-    } else if mode & 0o002 != 0 {
-        "write".to_string()
-    } else if mode & 0o004 != 0 {
-        "readonly".to_string()
-    } else {
-        "none".to_string()
+    let helper_resp: serde_json::Value = match serde_json::from_str(&response_line) {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+                success: false,
+                data: None,
+                error: Some(format!("Invalid response from zuti-helper: {}", e)),
+            });
+        }
+    };
+
+    let success = helper_resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !success {
+        let error = helper_resp.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error from zuti-helper");
+        return HttpResponse::InternalServerError().json(ZfsShareInfoResponse {
+            success: false,
+            data: None,
+            error: Some(error.to_string()),
+        });
+    }
+
+    let data = match helper_resp.get("data") {
+        Some(d) => {
+            let owner = d.get("owner").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let permission = d.get("permission").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let guest_permission = d.get("guest_permission").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let quota = d.get("quota").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            Some(ZfsShareInfoData {
+                owner,
+                permission,
+                guest_permission,
+                quota,
+            })
+        }
+        None => None,
     };
 
     HttpResponse::Ok().json(ZfsShareInfoResponse {
         success: true,
-        data: Some(ZfsShareInfoData {
-            owner,
-            permission: owner_permission,
-            guest_permission,
-            quota,
-        }),
+        data,
         error: None,
     })
 }
