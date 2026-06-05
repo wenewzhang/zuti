@@ -218,8 +218,7 @@ create zfs pool
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer $TOKEN" \
       -d '{
-          "share_name": "goodshare",
-          "dataset_name": "one-pool/tools",
+          "dataset_name": "one-pool/tools/goodshare",
           "quota": "1G",
           "samba_user": "sb"
       }'

@@ -1103,8 +1103,7 @@ pub async fn list_pools(
 // Create ZFS Share 请求结构体
 #[derive(Deserialize)]
 pub struct CreateZfsShareRequest {
-    pub share_name: String,      // 共享名称（dataset 名称）
-    pub dataset_name: String,       // ZFS pool 名称
+    pub dataset_name: String,    // ZFS dataset 完整路径（如 pool/dataset）
     pub quota: String,           // 容量限制，如 "10G", "100M", "1T"
     pub samba_user: String,      // Samba 用户名（用于设置目录所有者）
 }
@@ -1119,9 +1118,9 @@ pub struct CreateZfsShareResponse {
 
 // create_zfs_share API - 创建 ZFS 共享数据集（需要 JWT 认证）
 // 执行步骤：
-// 1. zfs create -o sharesmb=on -o compression=lz4 <pool>/<share_name>
-// 2. zfs set quota=<quota> <pool>/<share_name>
-// 3. zfs set mountpoint=<mountpoint> <pool>/<share_name>
+// 1. zfs create -o sharesmb=on -o compression=lz4 <dataset_name>
+// 2. zfs set quota=<quota> <dataset_name>
+// 3. zfs set mountpoint=<mountpoint> <dataset_name>
 // 4. chown -R <samba_user>:<samba_user> <mountpoint>
 #[post("/smb/create_zfs_share")]
 pub async fn create_zfs_share(
@@ -1135,23 +1134,13 @@ pub async fn create_zfs_share(
         Err(response) => return response,
     };
 
-    let share_name = &share_req.share_name;
     let dataset_name = &share_req.dataset_name;
     let quota = &share_req.quota;
     let samba_user = &share_req.samba_user;
-    // 自动生成 mountpoint: /pool/share_name
-    let mountpoint = format!("/{}/{}", dataset_name, share_name);
+    // 自动生成 mountpoint: /dataset_name
+    // let mountpoint = format!("/{}", dataset_name);
 
-    // 2. 验证 share_name 合法性（只允许字母数字、下划线、连字符）
-    if !share_name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
-        return HttpResponse::BadRequest().json(CreateZfsShareResponse {
-            success: false,
-            message: "Invalid share name format".to_string(),
-            error: Some("Share name must contain only alphanumeric characters, underscores, or hyphens".to_string()),
-        });
-    }
-
-    // 3. 验证 pool_name 不为空
+    // 2. 验证 dataset_name 不为空
     if dataset_name.is_empty() {
         return HttpResponse::BadRequest().json(CreateZfsShareResponse {
             success: false,
@@ -1216,7 +1205,6 @@ pub async fn create_zfs_share(
 
     let request_json = match serde_json::to_string(&serde_json::json!({
         "action": "create_zfs_share",
-        "share_name": share_name,
         "dataset_name": dataset_name,
         "quota": quota,
         "samba_user": samba_user,
@@ -1279,8 +1267,8 @@ pub async fn create_zfs_share(
         HttpResponse::Ok().json(CreateZfsShareResponse {
             success: true,
             message: format!(
-                "ZFS share '{}' created successfully on pool '{}', mounted at '{}' with quota '{}'",
-                share_name, dataset_name, mountpoint, quota
+                "ZFS share '{}' created successfully,  quota '{}'",
+                dataset_name, quota
             ),
             error: None,
         })
@@ -1288,7 +1276,7 @@ pub async fn create_zfs_share(
         let error = helper_resp.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error from zuti-helper");
         HttpResponse::InternalServerError().json(CreateZfsShareResponse {
             success: false,
-            message: format!("Failed to create ZFS share '{}'", share_name),
+            message: format!("Failed to create ZFS share '{}'", dataset_name),
             error: Some(error.to_string()),
         })
     }
