@@ -1,9 +1,9 @@
 #!/bin/bash
 
 cargo build --release
-systemctl stop zuti
-cp -a target/release/zuti /usr/bin/.
-cp -a debian/zuti.service /usr/lib/systemd/system/zuti.service
-systemctl daemon-reload
-systemctl start zuti
-journalctl -xeu zuti
+sudo systemctl stop zuti
+sudo cp -a target/release/zuti /usr/bin/.
+sudo cp -a debian/zuti.service /usr/lib/systemd/system/zuti.service
+sudo systemctl daemon-reload
+sudo systemctl start zuti
+sudo journalctl -xeu zuti
