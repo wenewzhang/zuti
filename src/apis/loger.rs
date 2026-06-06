@@ -126,6 +126,6 @@ pub async fn get_zuti_updater_log(
     if let Err(response) = validate_token_with_db(&req, &pool).await {
         return response;
     }
-    let response = read_log_file("/var/log/zuti/zuti-upgrader.log", &query);
+    let response = read_log_file("/var/log/zuti/zuti-updater.log", &query);
     HttpResponse::Ok().json(response)
 }
