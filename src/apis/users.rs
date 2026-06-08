@@ -872,6 +872,141 @@ pub async fn delete_user(
     }
 }
 
+#[derive(Deserialize)]
+pub struct LoginSettingQuery {
+    pub username: String,
+}
+
+#[derive(Serialize)]
+pub struct LoginSettingResponse {
+    pub success: bool,
+    pub home_dir: String,
+    pub shell: String,
+    pub error: Option<String>,
+}
+
+fn read_passwd_entry(username: &str) -> Result<(String, String), String> {
+    let content = std::fs::read_to_string("/etc/passwd")
+        .map_err(|e| format!("Failed to read /etc/passwd: {}", e))?;
+
+    for line in content.lines() {
+        let parts: Vec<&str> = line.split(':').collect();
+        if parts.len() >= 7 && parts[0] == username {
+            let home_dir = parts[parts.len() - 2].to_string();
+            let shell = parts[parts.len() - 1].to_string();
+            return Ok((home_dir, shell));
+        }
+    }
+
+    Err(format!("User '{}' not found in /etc/passwd", username))
+}
+
+#[get("/user/login_setting")]
+pub async fn get_login_setting(query: web::Query<LoginSettingQuery>) -> impl Responder {
+    let username = &query.username;
+
+    if username.is_empty() {
+        return HttpResponse::BadRequest().json(LoginSettingResponse {
+            success: false,
+            home_dir: "".to_string(),
+            shell: "".to_string(),
+            error: Some("Username cannot be empty".to_string()),
+        });
+    }
+
+    match read_passwd_entry(username) {
+        Ok((home, shell)) => {
+            let shell_short = match shell.as_str() {
+                "/usr/sbin/nologin" => "nologin".to_string(),
+                "/usr/bin/bash" => "bash".to_string(),
+                _ => shell,
+            };
+            HttpResponse::Ok().json(LoginSettingResponse {
+                success: true,
+                home_dir: home,
+                shell: shell_short,
+                error: None,
+            })
+        }
+        Err(e) => HttpResponse::InternalServerError().json(LoginSettingResponse {
+            success: false,
+            home_dir: "".to_string(),
+            shell: "".to_string(),
+            error: Some(e),
+        }),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct LoginSettRequest {
+    pub username: String,
+    pub login_type: String, // nologin 或 bash
+}
+
+#[derive(Serialize)]
+pub struct LoginSettResponse {
+    pub success: bool,
+    pub message: String,
+    pub error: Option<String>,
+}
+
+fn set_user_shell(username: &str, shell: &str) -> Result<(), String> {
+    let output = Command::new("usermod")
+        .args(["-s", shell, username])
+        .output();
+
+    match output {
+        Ok(result) => {
+            if result.status.success() {
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                Err(format!("Failed to set shell: {}", stderr))
+            }
+        }
+        Err(e) => Err(format!("Command error: {}", e)),
+    }
+}
+
+#[post("/user/login_setting")]
+pub async fn post_login_setting(req: web::Json<LoginSettRequest>) -> impl Responder {
+    let username = &req.username;
+    let login_type = &req.login_type;
+
+    if username.is_empty() {
+        return HttpResponse::BadRequest().json(LoginSettResponse {
+            success: false,
+            message: "Username cannot be empty".to_string(),
+            error: Some("Username is required".to_string()),
+        });
+    }
+
+    let shell = match login_type.as_str() {
+        "nologin" => "/usr/sbin/nologin",
+        "bash" => "/usr/bin/bash",
+        _ => {
+            return HttpResponse::BadRequest().json(LoginSettResponse {
+                success: false,
+                message: "Invalid login type".to_string(),
+                error: Some("login_type must be 'nologin' or 'bash'".to_string()),
+            });
+        }
+    };
+
+    match set_user_shell(username, shell) {
+        Ok(_) => HttpResponse::Ok().json(LoginSettResponse {
+            success: true,
+            message: format!("Login shell for user '{}' set to '{}'", username, shell),
+            error: None,
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(LoginSettResponse {
+            success: false,
+            message: "Failed to set login shell".to_string(),
+            error: Some(e),
+        }),
+    }
+}
+
 #[get("/list_users")]
 pub async fn list_users(req: HttpRequest, pool: web::Data<DbPool>) -> impl Responder {
         // 验证 JWT token
