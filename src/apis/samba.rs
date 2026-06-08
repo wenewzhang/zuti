@@ -186,9 +186,9 @@ pub async fn smb_public_share(
 
     // Set directory permissions argument
     let chmod_arg = if share_req.read_only.to_lowercase() == "yes" {
-        "a-w"
+        "a-w+r+x"
     } else {
-        "a+w"
+        "a+w+r+x"
     };
 
     // 通过 zuti-helper 创建目录并设置所有者和权限
@@ -204,7 +204,7 @@ pub async fn smb_public_share(
     };
 
     let request_json = match serde_json::to_string(&serde_json::json!({
-        "action": "create_directory",
+        "action": "create_dataset_and_directory",
         "directory": &share_req.directory,
         "owner": "root:root",
         "arg": chmod_arg,
@@ -390,9 +390,9 @@ pub async fn smb_auth_share(
 
     // Set directory permissions argument
     let chmod_arg = if share_req.read_only.to_lowercase() == "yes" {
-        "a+w"
+        "a-w-r+x,u+r+x"
     } else {
-        "a+w"
+        "a-w+r+x,u+w+r+x"
     };
 
     // 通过 zuti-helper 创建目录并设置所有者和权限
@@ -408,7 +408,7 @@ pub async fn smb_auth_share(
     };
 
     let request_json = match serde_json::to_string(&serde_json::json!({
-        "action": "create_directory",
+        "action": "create_dataset_and_directory",
         "directory": &share_req.directory,
         "owner": "root:root",
         "arg": chmod_arg,
@@ -1884,9 +1884,9 @@ pub async fn update_public_share(
 
     // 如果 read_only 为 yes，通过 zuti-helper 设置目录权限
     let chmod_arg = if share_req.read_only.to_lowercase() == "yes" {
-        "a-w"
+        "a-w+r+x"
     } else {
-        "a+w"
+        "a+w+r+x"
     };
 
     if let Some(section) = ini.section(Some(share_name)) {
@@ -1903,7 +1903,7 @@ pub async fn update_public_share(
             };
 
             let request_json = match serde_json::to_string(&serde_json::json!({
-                "action": "create_directory",
+                "action": "create_dataset_and_directory",
                 "directory": dir_path,
                 "owner": "root:root",
                 "arg": chmod_arg,
