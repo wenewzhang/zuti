@@ -392,7 +392,7 @@ pub async fn smb_auth_share(
     let chmod_arg = if share_req.read_only.to_lowercase() == "yes" {
         "a-w-r+x,u+r+x"
     } else {
-        "a-w+r+x,u+w+r+x"
+        "a-w-r+x,u+w+r+x"
     };
 
     // 通过 zuti-helper 创建目录并设置所有者和权限
