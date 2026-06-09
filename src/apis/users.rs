@@ -11,7 +11,7 @@ use crate::schema;
 use crate::schema::users::dsl::*;
 use crate::utils;
 use crate::DbPool;
-use crate::utils::admin::validate_token_with_db;
+use crate::utils::admin::{is_share_or_read, validate_token_with_db, verify_admin_access};
 use crate::utils::consts::FORBIDDEN_USERNAME;
 
 // 登录请求结构体
@@ -902,7 +902,12 @@ fn read_passwd_entry(username: &str) -> Result<(String, String), String> {
 }
 
 #[get("/user/login_setting")]
-pub async fn get_login_setting(query: web::Query<LoginSettingQuery>) -> impl Responder {
+pub async fn get_login_setting(req: HttpRequest, pool: web::Data<DbPool>, query: web::Query<LoginSettingQuery>) -> impl Responder {
+    // 验证 JWT token
+    if let Err(response) = validate_token_with_db(&req, &pool).await {
+        return response;
+    }
+
     let username = &query.username;
 
     if username.is_empty() {
@@ -969,9 +974,14 @@ fn set_user_shell(username: &str, shell: &str) -> Result<(), String> {
 }
 
 #[post("/user/login_setting")]
-pub async fn post_login_setting(req: web::Json<LoginSettRequest>) -> impl Responder {
-    let username = &req.username;
-    let login_type = &req.login_type;
+pub async fn post_login_setting(req: HttpRequest, pool: web::Data<DbPool>, body: web::Json<LoginSettRequest>) -> impl Responder {
+    // 验证 admin token
+    if let Err(response) = verify_admin_access(&req, &pool).await {
+        return response;
+    }
+
+    let username = &body.username;
+    let login_type = &body.login_type;
 
     if username.is_empty() {
         return HttpResponse::BadRequest().json(LoginSettResponse {
@@ -979,6 +989,25 @@ pub async fn post_login_setting(req: web::Json<LoginSettRequest>) -> impl Respon
             message: "Username cannot be empty".to_string(),
             error: Some("Username is required".to_string()),
         });
+    }
+
+    // 验证 username 是否为 share 或 read 用户
+    match is_share_or_read(pool.get_ref(), username) {
+        Ok(true) => {}
+        Ok(false) => {
+            return HttpResponse::Forbidden().json(LoginSettResponse {
+                success: false,
+                message: "Permission denied".to_string(),
+                error: Some("Only share or read users can be modified".to_string()),
+            });
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(LoginSettResponse {
+                success: false,
+                message: "Failed to check user type".to_string(),
+                error: Some(e.to_string()),
+            });
+        }
     }
 
     let shell = match login_type.as_str() {
