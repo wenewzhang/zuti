@@ -1,5 +1,6 @@
 pub mod chkpoint;
 pub mod container;
+pub mod dashboard;
 pub mod disks;
 pub mod docker;
 pub mod docker_compose;

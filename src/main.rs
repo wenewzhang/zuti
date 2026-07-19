@@ -200,6 +200,7 @@ async fn main() -> std::io::Result<()> {
             .service(ping)
             .service(apis::chkpoint::get_chkpoint)
             .service(apis::chkpoint::create_chkpoint)
+            .service(apis::dashboard::realinfo::get_realinfo)
             .service(apis::chkpoint::remove_chkpoint)
             .service(apis::chkpoint::rollback_chkpoint)
             .service(apis::users::has_admin)
